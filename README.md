@@ -50,11 +50,10 @@ dependencies are added as later milestones land.
 - **M2** — Decompress (Zstd/zlib) + read the classic histogram family — all
   precisions `TH1/2/3{D,F,I,S,C,L}` plus `TProfile`, via the streamer engine;
   parse the `TStreamerInfo` list. ✅ _done_
-- **M3** — RNTuple read. ✅ _Core path end-to-end: anchor → header/footer
-  envelopes → schema → cluster groups → page list → page decode → values
-  (scalars, `std::string`, `std::vector<T>`), all XXH3-verified and validated
-  against uproot. Split/zigzag/delta encodings and compressed RNTuples are
-  follow-ups._
+- **M3** — RNTuple read. ✅ _End-to-end, validated against uproot: anchor →
+  envelopes → schema → cluster groups → page list → page decode, including
+  split/zigzag/delta encodings and Zstd-compressed pages, plus a typed field
+  API (`read_field`) for scalars, `std::string`, and `std::vector<T>`._
 - **M4** — TFile write + write a TH1D ROOT can read.
 - **M5** — RNTuple write.
 - **M6** — Round-trip / interop hardening.

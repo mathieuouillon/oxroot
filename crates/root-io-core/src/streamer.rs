@@ -6,7 +6,7 @@
 //! later schema versions. `TObject` is the notable exception — it is written
 //! with a 2-byte version and no byte count.
 
-use crate::buffer::RBuffer;
+use crate::buffer::{RBuffer, WBuffer};
 use crate::error::Result;
 
 /// `TObject::kIsReferenced` — when set in `fBits`, a 2-byte process-id follows.
@@ -76,6 +76,23 @@ pub fn skip_versioned(r: &mut RBuffer) -> Result<u16> {
             "cannot skip a versioned object that carries no byte count".into(),
         )),
     }
+}
+
+/// Write a `TObject` base: a 2-byte version, `fUniqueID = 0`, and `fBits`.
+/// (No byte count, matching ROOT's `TObject::Streamer`.)
+pub fn write_tobject(w: &mut WBuffer, bits: u32) {
+    w.be_u16(1); // TObject version
+    w.be_u32(0); // fUniqueID
+    w.be_u32(bits); // fBits
+}
+
+/// Write a `TNamed` base (a byte-counted `TObject` + `fName` + `fTitle`).
+pub fn write_tnamed(w: &mut WBuffer, bits: u32, name: &str, title: &str) {
+    let tok = w.begin_object(1); // TNamed version 1
+    write_tobject(w, bits);
+    w.string(name);
+    w.string(title);
+    w.end_object(tok);
 }
 
 #[cfg(test)]

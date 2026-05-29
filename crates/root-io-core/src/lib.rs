@@ -21,5 +21,7 @@ pub mod streamer_info;
 
 pub use error::{Error, Result};
 pub use file::{Directory, FileHeader, FreeSegment, RFile, TDatime, TKey, TUuid};
-pub use streamer::{read_tnamed, read_tobject, skip_versioned, TNamed, TObjectHeader};
+pub use streamer::{
+    read_tnamed, read_tobject, skip_versioned, write_tnamed, write_tobject, TNamed, TObjectHeader,
+};
 pub use streamer_info::{parse_streamer_info, StreamerElement, StreamerInfo, StreamerRegistry};
