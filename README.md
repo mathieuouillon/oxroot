@@ -63,8 +63,9 @@ dependencies are added as later milestones land.
   (`Int32`/`Real32`/`Real64`) — header/page-list/footer envelopes + XXH3 anchor
   — that both official ROOT (`RNTupleReader`) and uproot read with correct
   values._
-- **M6** — Round-trip / interop hardening (more types, compression on write,
-  `update` mode, >2 GiB, multi-cluster).
+- **M6** — Round-trip / interop hardening. _In progress: write-side Zstd
+  compression ✅ (ROOT+uproot read root-rs's compressed files). Remaining: more
+  write types, `update` mode, multi-cluster, >2 GiB._
 
 ## License
 
