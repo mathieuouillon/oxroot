@@ -8,7 +8,10 @@ use std::path::Path;
 
 use root_io_core::buffer::WBuffer;
 use root_io_core::streamer::{write_tnamed, write_tobject};
-use root_io_core::{update_root_file, write_root_file_with_streamers, ObjectRecord};
+use root_io_core::{
+    update_root_file, write_root_file_with_dirs, write_root_file_with_streamers, ObjectRecord,
+    Subdir,
+};
 
 use crate::axis::TAxis;
 use crate::th1::TH1;
@@ -258,6 +261,39 @@ pub fn write_histograms_file(path: &Path, hists: &[Hist], compression: u32) -> s
     std::fs::write(
         path,
         write_root_file_with_streamers(file_name, &records, compression, Some(HIST_STREAMER_INFO)),
+    )
+}
+
+/// Write histograms organized into subdirectories: `root` goes in the file's
+/// top directory, and each `(name, hists)` in `subdirs` becomes a `TDirectory`
+/// holding its own histograms (e.g. one directory per analysis region).
+pub fn write_histograms_dirs(
+    path: &Path,
+    root: &[Hist],
+    subdirs: &[(&str, &[Hist])],
+    compression: u32,
+) -> std::io::Result<()> {
+    let file_name = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("file.root");
+    let root_objects: Vec<ObjectRecord> = root.iter().map(Hist::record).collect();
+    let dirs: Vec<Subdir> = subdirs
+        .iter()
+        .map(|(name, hists)| Subdir {
+            name: name.to_string(),
+            objects: hists.iter().map(Hist::record).collect(),
+        })
+        .collect();
+    std::fs::write(
+        path,
+        write_root_file_with_dirs(
+            file_name,
+            &root_objects,
+            &dirs,
+            compression,
+            Some(HIST_STREAMER_INFO),
+        ),
     )
 }
 

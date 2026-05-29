@@ -4,7 +4,7 @@
 //! [`crate::base`]; the inline `TArray` holds the bin contents.
 
 use root_io_core::buffer::RBuffer;
-use root_io_core::error::Result;
+use root_io_core::error::{Error, Result};
 use root_io_core::RFile;
 
 use crate::axis::TAxis;
@@ -205,4 +205,15 @@ pub fn read_th1f(file: &RFile, name: &str) -> Result<TH1> {
 fn read_th1_named(file: &RFile, name: &str, class: &str) -> Result<TH1> {
     let object = object_bytes(file, name, class)?;
     TH1::read(&mut RBuffer::new(&object), class, precision_of(class)?)
+}
+
+/// Read a `TH1D` from a subdirectory of an open ROOT file.
+pub fn read_th1d_in(file: &RFile, subdir: &str, name: &str) -> Result<TH1> {
+    let (class, object) = file.object_in(subdir, name)?;
+    if class != "TH1D" {
+        return Err(Error::Format(format!(
+            "key {name:?} in {subdir:?} is a {class}, not TH1D"
+        )));
+    }
+    TH1::read(&mut RBuffer::new(&object), &class, precision_of(&class)?)
 }

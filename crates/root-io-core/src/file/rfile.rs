@@ -75,6 +75,35 @@ impl RFile {
             .max_by_key(|k| k.cycle)
     }
 
+    /// Navigate into a subdirectory by name, returning its parsed [`Directory`]
+    /// (with the keys it directly contains). Errors if the root directory has no
+    /// such `TDirectory` key.
+    pub fn subdir(&self, name: &str) -> Result<Directory> {
+        let key = self
+            .root_dir
+            .keys
+            .iter()
+            .find(|k| k.name == name && k.class_name == "TDirectory")
+            .ok_or_else(|| Error::Format(format!("no subdirectory named {name:?}")))?;
+        Directory::read(&self.data, key.payload_range().start)
+    }
+
+    /// Return the class name and decompressed object bytes for key `name` inside
+    /// subdirectory `subdir`.
+    pub fn object_in(&self, subdir: &str, name: &str) -> Result<(String, Vec<u8>)> {
+        let dir = self.subdir(subdir)?;
+        let key = dir
+            .keys
+            .iter()
+            .filter(|k| k.name == name && !k.is_deleted())
+            .max_by_key(|k| k.cycle)
+            .ok_or_else(|| Error::Format(format!("no key {name:?} in subdirectory {subdir:?}")))?;
+        let payload = &self.data[key.payload_range()];
+        let object = root_compress::decompress(payload, key.obj_len as usize)
+            .map_err(|e| Error::Format(format!("decompressing {name:?}: {e}")))?;
+        Ok((key.class_name.clone(), object))
+    }
+
     /// The file's free-segment list (informational).
     pub fn free_segments(&self) -> Result<Vec<FreeSegment>> {
         read_free(&self.data, &self.header)

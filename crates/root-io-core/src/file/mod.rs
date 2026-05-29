@@ -15,5 +15,5 @@ pub use key::{TDatime, TKey};
 pub use rfile::RFile;
 pub use writer::{
     key_len, update_root_file, write_key_header, write_key_header_cycle, write_root_file,
-    write_root_file_with_streamers, ObjectRecord,
+    write_root_file_with_dirs, write_root_file_with_streamers, ObjectRecord, Subdir,
 };
