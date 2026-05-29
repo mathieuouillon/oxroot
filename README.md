@@ -64,8 +64,27 @@ dependencies are added as later milestones land.
   — that both official ROOT (`RNTupleReader`) and uproot read with correct
   values._
 - **M6** — Round-trip / interop hardening. _In progress: write-side Zstd
-  compression ✅ (ROOT+uproot read root-rs's compressed files). Remaining: more
-  write types, `update` mode, multi-cluster, >2 GiB._
+  compression ✅ (ROOT+uproot read root-rs's compressed files). Remaining:
+  streamer-info emission, `update` mode, multi-cluster, >2 GiB, RNTuple write
+  compression._
+
+## Analysis API
+
+Build and fill objects from scratch, then save them — and read them back in
+ROOT or uproot.
+
+- **Histograms** — `TH1::new`/`fill`, `TH2::new`/`fill`, `TH3::new`/`fill`, and
+  `TProfile::new`/`fill` follow ROOT's `Fill` semantics (entry counting, flow
+  bins, in-range moment sums; profile Σwy/Σwy²/Σw). Save with
+  `write_th1d_file`/`write_th2d_file`/`write_th3d_file`/`write_tprofile_file`, or
+  several at once (mixed dimensions) with `write_histograms_file`. TH1D/TH2D are
+  byte-identical to ROOT; TH3D/TProfile round-trip real ROOT data and read back
+  in official ROOT (with correct bin errors) and uproot. ✅
+- **RNTuple** — `write_rntuple_file(path, name, &[Field])` writes `bool`, 32/64-bit
+  ints, `f32`/`f64`, `std::string`, and `std::vector<T>` columns; validated with
+  `RNTupleReader` and uproot. ✅
+- _Follow-ups: float-precision (`TH1F`/`TH2F`/…) write, weighted-histogram
+  `Sumw2`, multi-cluster/compressed RNTuple write._
 
 ## License
 
