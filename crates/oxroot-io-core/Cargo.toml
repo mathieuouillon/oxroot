@@ -1,0 +1,11 @@
+[package]
+name = "oxroot-io-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Core ROOT (TFile) container and buffer primitives"
+
+[dependencies]
+oxroot-compress = { workspace = true }

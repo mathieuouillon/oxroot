@@ -1,0 +1,13 @@
+[package]
+name = "oxroot-rntuple"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "RNTuple reader/writer (ROOT columnar event-data format)"
+
+[dependencies]
+oxroot-io-core = { workspace = true }
+oxroot-compress = { workspace = true }
+xxhash-rust = { version = "0.8", features = ["xxh3"] }

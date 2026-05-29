@@ -1,4 +1,4 @@
-# root-rs
+# oxroot
 
 Pure-Rust IO for the [CERN ROOT](https://root.cern) file format — read and write
 **RNTuple** and **classic histograms** (TH1/TH2/TH3/TProfile) in the ROOT (TFile)
@@ -26,7 +26,7 @@ container, with **no C++/libROOT dependency**.
 Everything common lives behind one import:
 
 ```rust
-use root_rs::prelude::*;
+use oxroot::prelude::*;
 
 // Fill and save a histogram (weighted errors + variable bins available).
 let mut h = TH1::new("pt", "p_{T}", 50, 0.0, 100.0);
@@ -41,20 +41,20 @@ let f = RFile::open("data.root")?;
 let n = RNTuple::open(&f, "events")?.num_entries();
 ```
 
-See [`crates/root-rs/examples/analysis.rs`](crates/root-rs/examples/analysis.rs)
+See [`crates/oxroot/examples/analysis.rs`](crates/oxroot/examples/analysis.rs)
 for an end-to-end mini analysis (weighted/variable-bin histograms, scale/merge,
 per-region subdirectories, a columnar event dataset, read-back). Run it with
-`cargo run -p root-rs --example analysis`.
+`cargo run -p oxroot --example analysis`.
 
 ## Workspace layout
 
 | Crate | Purpose |
 |-------|---------|
-| `root-io-core` | TFile container + buffer primitives + streamer engine |
-| `root-compress` | ROOT 9-byte block framing + codec backends |
-| `root-rntuple` | RNTuple reader/writer (spec v1.0.0.0) |
-| `root-hist` | Classic TH1/TH2/TH3/TProfile read/write |
-| `root-rs` | Facade crate: `prelude` + re-exports of all of the above |
+| `oxoxroot-io-core` | TFile container + buffer primitives + streamer engine |
+| `oxoxroot-compress` | ROOT 9-byte block framing + codec backends |
+| `oxoxroot-rntuple` | RNTuple reader/writer (spec v1.0.0.0) |
+| `oxoxroot-hist` | Classic TH1/TH2/TH3/TProfile read/write |
+| `oxroot` | Facade crate: `prelude` + re-exports of all of the above |
 
 ## Build & test
 
@@ -80,11 +80,11 @@ Dependencies are pure-Rust: `xxhash-rust` (RNTuple XXH3 checksums), `ruzstd`
   envelopes → schema → cluster groups → page list → page decode, including
   split/zigzag/delta encodings and Zstd-compressed pages, plus a typed field
   API (`read_field`) for scalars, `std::string`, and `std::vector<T>`._
-- **M4** — TFile write + a TH1D ROOT can read. ✅ _root-rs writes a complete
+- **M4** — TFile write + a TH1D ROOT can read. ✅ _oxroot writes a complete
   TFile (header, TDirectory, object keys, key list) holding a byte-identical
   `TH1D` object; both uproot and official ROOT read it back with correct
   bins/stats. (Streamer-info emission + write compression are follow-ups.)_
-- **M5** — RNTuple write. ✅ _root-rs writes a scalar RNTuple
+- **M5** — RNTuple write. ✅ _oxroot writes a scalar RNTuple
   (`Int32`/`Real32`/`Real64`) — header/page-list/footer envelopes + XXH3 anchor
   — that both official ROOT (`RNTupleReader`) and uproot read with correct
   values._
