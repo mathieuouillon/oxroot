@@ -1,6 +1,6 @@
 # oxroot
 
-[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Rust 1.95+](https://img.shields.io/badge/rust-1.95%2B-orange.svg)](https://www.rust-lang.org)
 [![No libROOT](https://img.shields.io/badge/dependency-no%20libROOT-success.svg)](#)
 
@@ -131,6 +131,4 @@ float-precision histogram *write* (`TH1F`/…), and `> 2 GiB` (64-bit) files.
 
 ## License
 
-Dual-licensed under either the [MIT license](https://opensource.org/licenses/MIT)
-or the [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0) at your
-option.
+Licensed under the [MIT License](LICENSE).
