@@ -8,7 +8,7 @@ use std::path::Path;
 
 use root_io_core::buffer::WBuffer;
 use root_io_core::streamer::{write_tnamed, write_tobject};
-use root_io_core::{write_root_file, ObjectRecord};
+use root_io_core::{write_root_file_with_streamers, ObjectRecord};
 
 use crate::axis::TAxis;
 use crate::th1::TH1;
@@ -29,8 +29,18 @@ pub fn write_th1d_file(path: &Path, h: &TH1, compression: u32) -> std::io::Resul
         title: h.title.clone(),
         object: th1d_to_bytes(h),
     };
-    std::fs::write(path, write_root_file(file_name, &[record], compression))
+    std::fs::write(
+        path,
+        write_root_file_with_streamers(file_name, &[record], compression, Some(HIST_STREAMER_INFO)),
+    )
 }
+
+/// Streamer info (`TList<TStreamerInfo>`) describing the writable histogram
+/// hierarchy — `TH1/2/3{D}`, `TProfile`, and every base/member class — at the
+/// exact class versions this module emits. Embedded in every written file so it
+/// is self-describing. Sourced from a uproot-written file containing one of each
+/// type (uproot's object bytes are byte-identical to ours), kept uncompressed.
+const HIST_STREAMER_INFO: &[u8] = include_bytes!("histograms.streamerinfo.bin");
 
 // `fBits` values ROOT writes for the embedded TObjects in a fresh histogram.
 const HIST_BITS: u32 = 0x0300_0008;
@@ -66,7 +76,10 @@ pub fn write_th2d_file(path: &Path, h: &TH2, compression: u32) -> std::io::Resul
         title: h.title.clone(),
         object: th2d_to_bytes(h),
     };
-    std::fs::write(path, write_root_file(file_name, &[record], compression))
+    std::fs::write(
+        path,
+        write_root_file_with_streamers(file_name, &[record], compression, Some(HIST_STREAMER_INFO)),
+    )
 }
 
 /// Serialize a `TH2D` object (including its leading byte-count/version header)
@@ -119,7 +132,10 @@ pub fn write_th3d_file(path: &Path, h: &TH3, compression: u32) -> std::io::Resul
         title: h.title.clone(),
         object: th3d_to_bytes(h),
     };
-    std::fs::write(path, write_root_file(file_name, &[record], compression))
+    std::fs::write(
+        path,
+        write_root_file_with_streamers(file_name, &[record], compression, Some(HIST_STREAMER_INFO)),
+    )
 }
 
 /// Serialize a `TH3D` object (including its leading byte-count/version header)
@@ -178,7 +194,10 @@ pub fn write_tprofile_file(path: &Path, h: &TProfile, compression: u32) -> std::
         title: h.title.clone(),
         object: tprofile_to_bytes(h),
     };
-    std::fs::write(path, write_root_file(file_name, &[record], compression))
+    std::fs::write(
+        path,
+        write_root_file_with_streamers(file_name, &[record], compression, Some(HIST_STREAMER_INFO)),
+    )
 }
 
 /// Serialize a `TProfile` object (including its leading byte-count/version
@@ -258,7 +277,10 @@ pub fn write_histograms_file(path: &Path, hists: &[Hist], compression: u32) -> s
         .and_then(|s| s.to_str())
         .unwrap_or("file.root");
     let records: Vec<ObjectRecord> = hists.iter().map(Hist::record).collect();
-    std::fs::write(path, write_root_file(file_name, &records, compression))
+    std::fs::write(
+        path,
+        write_root_file_with_streamers(file_name, &records, compression, Some(HIST_STREAMER_INFO)),
+    )
 }
 
 fn write_th1_base(w: &mut WBuffer, h: &TH1) {

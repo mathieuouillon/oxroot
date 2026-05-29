@@ -86,6 +86,31 @@ fn create_fill_save_round_trips() {
 }
 
 #[test]
+fn written_file_embeds_self_describing_streamer_info() {
+    // A written file carries a TStreamerInfo list covering the histogram
+    // hierarchy at the exact versions we emit, so any ROOT reader can read it.
+    let mut h = TH1::new("h", "", 5, 0.0, 5.0);
+    h.fill(2.5);
+    let out = std::path::PathBuf::from("/tmp/rootrs_streamerinfo_th1d.root");
+    root_hist::write_th1d_file(&out, &h, 0).expect("write");
+
+    let f = RFile::open(&out).expect("reopen");
+    let reg = f.streamer_registry().expect("parse embedded streamer info");
+    let classes = reg.class_names();
+    for expected in ["TH1D", "TH2D", "TH3D", "TProfile", "TH1", "TAxis", "TNamed"] {
+        assert!(
+            classes.contains(&expected),
+            "missing streamer for {expected}"
+        );
+    }
+    // Versions must match what our serializer writes.
+    assert_eq!(reg.get("TH1").unwrap().class_version, 8);
+    assert_eq!(reg.get("TH1D").unwrap().class_version, 3);
+    assert_eq!(reg.get("TAxis").unwrap().class_version, 10);
+    assert_eq!(reg.get("TProfile").unwrap().class_version, 7);
+}
+
+#[test]
 fn writes_a_zstd_compressed_th1d() {
     let f = RFile::open(fixture("th1d_uncompressed.root")).expect("open fixture");
     let h = read_th1d(&f, "h1").expect("read TH1D");

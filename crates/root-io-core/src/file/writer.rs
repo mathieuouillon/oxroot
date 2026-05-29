@@ -77,13 +77,33 @@ fn on_disk_payload(object: &[u8], compression: u32) -> Vec<u8> {
     }
 }
 
+/// Class/name/title of the streamer-info key. The fixed strings give the key a
+/// `KeyLen` of 64 bytes, which the baked `TList` blob's internal class-tag
+/// references depend on (ROOT resolves them relative to `-KeyLen`).
+const STREAMER_INFO_NAME: &str = "StreamerInfo";
+const STREAMER_INFO_TITLE: &str = "Doubly linked list";
+const TLIST_CLASS: &str = "TList";
+
 /// Build a complete TFile holding `objects` in its root directory, optionally
 /// compressing object payloads (`compression` = `algorithm*100 + level`, 0 = none).
 pub fn write_root_file(file_name: &str, objects: &[ObjectRecord], compression: u32) -> Vec<u8> {
+    write_root_file_with_streamers(file_name, objects, compression, None)
+}
+
+/// Like [`write_root_file`], but also embeds `streamer_info` (the already-streamed
+/// `TList<TStreamerInfo>` object bytes) as the file's streamer-info record at
+/// `fSeekInfo`, making the file self-describing for any ROOT reader.
+pub fn write_root_file_with_streamers(
+    file_name: &str,
+    objects: &[ObjectRecord],
+    compression: u32,
+    streamer_info: Option<&[u8]>,
+) -> Vec<u8> {
     let payloads: Vec<Vec<u8>> = objects
         .iter()
         .map(|o| on_disk_payload(&o.object, compression))
         .collect();
+    let streamer_payload = streamer_info.map(|si| on_disk_payload(si, compression));
     let mut w = WBuffer::new();
 
     // --- File header (100 bytes; pointers patched at the end). ---
@@ -154,6 +174,28 @@ pub fn write_root_file(file_name: &str, objects: &[ObjectRecord], compression: u
         seeks.push(seek);
     }
 
+    // --- Streamer-info record (TList<TStreamerInfo>), referenced by fSeekInfo
+    // only (not listed as a directory key). ---
+    let (seek_info, nbytes_info) = match (streamer_info, &streamer_payload) {
+        (Some(object), Some(payload)) => {
+            let seek = w.len();
+            write_key_header(
+                &mut w,
+                TLIST_CLASS,
+                STREAMER_INFO_NAME,
+                STREAMER_INFO_TITLE,
+                object.len() as u32,
+                payload.len() as u32,
+                seek as u64,
+                100,
+            );
+            w.bytes(payload);
+            let klen = key_len(TLIST_CLASS, STREAMER_INFO_NAME, STREAMER_INFO_TITLE) as u32;
+            (seek as u32, klen + payload.len() as u32)
+        }
+        _ => (0, 0),
+    };
+
     // --- Directory key list: a key, then nkeys, then a header per object. ---
     let keylist_seek = w.len();
     let keylist_obj_len = {
@@ -195,8 +237,8 @@ pub fn write_root_file(file_name: &str, objects: &[ObjectRecord], compression: u
     w.patch_be_u32(p_nbytes_free, 0);
     w.patch_be_u32(p_nfree, 0);
     w.patch_be_u32(p_nbytes_name, f_nbytes_name as u32);
-    w.patch_be_u32(p_seek_info, 0);
-    w.patch_be_u32(p_nbytes_info, 0);
+    w.patch_be_u32(p_seek_info, seek_info);
+    w.patch_be_u32(p_nbytes_info, nbytes_info);
     w.patch_be_u32(p_dir_nbytes_keys, keylist_nbytes);
     w.patch_be_u32(p_dir_seek_keys, keylist_seek as u32);
 
