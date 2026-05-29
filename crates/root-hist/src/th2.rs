@@ -48,6 +48,9 @@ pub struct TH2 {
     pub tsumwxy: f64,
     /// Bin contents including flow (length `ncells`, x fastest).
     pub contents: Vec<f64>,
+    /// Per-bin sum of squared weights (`fSumw2`); empty unless enabled via
+    /// [`TH2::sumw2`].
+    pub sumw2: Vec<f64>,
 }
 
 impl TH2 {
@@ -84,6 +87,7 @@ impl TH2 {
             tsumwy2,
             tsumwxy,
             contents,
+            sumw2: c.sumw2,
         })
     }
 
@@ -139,6 +143,53 @@ impl TH2 {
             tsumwy2: 0.0,
             tsumwxy: 0.0,
             contents: vec![0.0; ncells.max(0) as usize],
+            sumw2: Vec::new(),
+        }
+    }
+
+    /// Create an empty `TH2D` with variable bin edges on each axis.
+    pub fn new_variable(name: &str, title: &str, xedges: &[f64], yedges: &[f64]) -> TH2 {
+        let ncells = (xedges.len() as i32 + 1) * (yedges.len() as i32 + 1);
+        TH2 {
+            class_name: "TH2D".to_string(),
+            name: name.to_string(),
+            title: title.to_string(),
+            xaxis: TAxis::variable("xaxis", xedges),
+            yaxis: TAxis::variable("yaxis", yedges),
+            zaxis: TAxis::new("zaxis", 1, 0.0, 1.0),
+            ncells,
+            entries: 0.0,
+            tsumw: 0.0,
+            tsumw2: 0.0,
+            tsumwx: 0.0,
+            tsumwx2: 0.0,
+            tsumwy: 0.0,
+            tsumwy2: 0.0,
+            tsumwxy: 0.0,
+            contents: vec![0.0; ncells.max(0) as usize],
+            sumw2: Vec::new(),
+        }
+    }
+
+    /// Enable per-bin error tracking (ROOT's `Sumw2`); see [`crate::TH1::sumw2`].
+    pub fn sumw2(&mut self) {
+        if self.sumw2.len() != self.contents.len() {
+            self.sumw2 = self.contents.iter().map(|c| c.abs()).collect();
+        }
+    }
+
+    /// Per-bin error: `sqrt(sumw2[bin])` when error tracking is on, else
+    /// `sqrt(content)`. `bin` is the global cell index (x fastest).
+    pub fn bin_error(&self, bin: usize) -> f64 {
+        if let Some(&s) = self.sumw2.get(bin) {
+            s.max(0.0).sqrt()
+        } else {
+            self.contents
+                .get(bin)
+                .copied()
+                .unwrap_or(0.0)
+                .max(0.0)
+                .sqrt()
         }
     }
 
@@ -158,6 +209,9 @@ impl TH2 {
         let bin = binx + (nx + 2) * biny;
         if let Some(c) = self.contents.get_mut(bin) {
             *c += w;
+        }
+        if let Some(s) = self.sumw2.get_mut(bin) {
+            *s += w * w;
         }
         self.entries += 1.0;
 

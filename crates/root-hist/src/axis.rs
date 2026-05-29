@@ -34,6 +34,20 @@ impl TAxis {
         }
     }
 
+    /// Create a variable-width axis from `edges` (the `nbins + 1` bin
+    /// boundaries, ascending). Panics if fewer than two edges are given.
+    pub fn variable(name: &str, edges: &[f64]) -> TAxis {
+        assert!(edges.len() >= 2, "a variable axis needs at least two edges");
+        TAxis {
+            name: name.to_string(),
+            title: String::new(),
+            nbins: (edges.len() - 1) as i32,
+            xmin: edges[0],
+            xmax: edges[edges.len() - 1],
+            xbins: edges.to_vec(),
+        }
+    }
+
     /// Find the bin for value `x`: 0 = underflow, `1..=nbins` = in range,
     /// `nbins + 1` = overflow. Handles uniform and variable-width axes.
     pub fn find_bin(&self, x: f64) -> usize {

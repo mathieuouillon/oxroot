@@ -39,6 +39,9 @@ pub struct TH1 {
     pub tsumwx2: f64,
     /// Bin contents including under/overflow (length `ncells`).
     pub contents: Vec<f64>,
+    /// Per-bin sum of squared weights (`fSumw2`); empty unless error tracking is
+    /// enabled via [`TH1::sumw2`]. When present, `bin_error = sqrt(sumw2[bin])`.
+    pub sumw2: Vec<f64>,
 }
 
 impl TH1 {
@@ -60,6 +63,38 @@ impl TH1 {
             tsumwx: 0.0,
             tsumwx2: 0.0,
             contents: vec![0.0; cells],
+            sumw2: Vec::new(),
+        }
+    }
+
+    /// Create an empty `TH1D` with variable bin edges (`edges` = the `nbins + 1`
+    /// boundaries, ascending).
+    pub fn new_variable(name: &str, title: &str, edges: &[f64]) -> TH1 {
+        let cells = edges.len() + 1; // (edges.len() - 1) bins + 2 flow
+        TH1 {
+            class_name: "TH1D".to_string(),
+            name: name.to_string(),
+            title: title.to_string(),
+            xaxis: TAxis::variable("xaxis", edges),
+            yaxis: TAxis::new("yaxis", 1, 0.0, 1.0),
+            zaxis: TAxis::new("zaxis", 1, 0.0, 1.0),
+            ncells: cells as i32,
+            entries: 0.0,
+            tsumw: 0.0,
+            tsumw2: 0.0,
+            tsumwx: 0.0,
+            tsumwx2: 0.0,
+            contents: vec![0.0; cells],
+            sumw2: Vec::new(),
+        }
+    }
+
+    /// Enable per-bin error tracking (ROOT's `Sumw2`): allocate the `fSumw2`
+    /// array and seed it from the current contents, after which every fill also
+    /// accumulates `weight^2`. Call before filling for correct weighted errors.
+    pub fn sumw2(&mut self) {
+        if self.sumw2.len() != self.contents.len() {
+            self.sumw2 = self.contents.iter().map(|c| c.abs()).collect();
         }
     }
 
@@ -77,6 +112,9 @@ impl TH1 {
         let bin = self.xaxis.find_bin(x);
         if let Some(c) = self.contents.get_mut(bin) {
             *c += w;
+        }
+        if let Some(s) = self.sumw2.get_mut(bin) {
+            *s += w * w;
         }
         self.entries += 1.0;
         if (1..=nbins).contains(&bin) {
@@ -112,7 +150,23 @@ impl TH1 {
             tsumwx: c.tsumwx,
             tsumwx2: c.tsumwx2,
             contents,
+            sumw2: c.sumw2,
         })
+    }
+
+    /// Per-bin error: `sqrt(sumw2[bin])` when error tracking is on, otherwise the
+    /// Poisson default `sqrt(content)`. `bin` includes flow (0 = underflow).
+    pub fn bin_error(&self, bin: usize) -> f64 {
+        if let Some(&s) = self.sumw2.get(bin) {
+            s.max(0.0).sqrt()
+        } else {
+            self.contents
+                .get(bin)
+                .copied()
+                .unwrap_or(0.0)
+                .max(0.0)
+                .sqrt()
+        }
     }
 
     /// Bin contents excluding the under/overflow bins.

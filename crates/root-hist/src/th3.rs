@@ -58,6 +58,9 @@ pub struct TH3 {
     pub tsumwyz: f64,
     /// Bin contents including flow (length `ncells`, x fastest then y then z).
     pub contents: Vec<f64>,
+    /// Per-bin sum of squared weights (`fSumw2`); empty unless enabled via
+    /// [`TH3::sumw2`].
+    pub sumw2: Vec<f64>,
 }
 
 impl TH3 {
@@ -102,6 +105,7 @@ impl TH3 {
             tsumwxz,
             tsumwyz,
             contents,
+            sumw2: c.sumw2,
         })
     }
 
@@ -177,6 +181,29 @@ impl TH3 {
             tsumwxz: 0.0,
             tsumwyz: 0.0,
             contents: vec![0.0; ncells.max(0) as usize],
+            sumw2: Vec::new(),
+        }
+    }
+
+    /// Enable per-bin error tracking (ROOT's `Sumw2`); see [`crate::TH1::sumw2`].
+    pub fn sumw2(&mut self) {
+        if self.sumw2.len() != self.contents.len() {
+            self.sumw2 = self.contents.iter().map(|c| c.abs()).collect();
+        }
+    }
+
+    /// Per-bin error: `sqrt(sumw2[bin])` when error tracking is on, else
+    /// `sqrt(content)`. `bin` is the global cell index (x fastest, then y, z).
+    pub fn bin_error(&self, bin: usize) -> f64 {
+        if let Some(&s) = self.sumw2.get(bin) {
+            s.max(0.0).sqrt()
+        } else {
+            self.contents
+                .get(bin)
+                .copied()
+                .unwrap_or(0.0)
+                .max(0.0)
+                .sqrt()
         }
     }
 
@@ -196,6 +223,9 @@ impl TH3 {
         let bin = binx + (nx + 2) * (biny + (ny + 2) * binz);
         if let Some(c) = self.contents.get_mut(bin) {
             *c += w;
+        }
+        if let Some(s) = self.sumw2.get_mut(bin) {
+            *s += w * w;
         }
         self.entries += 1.0;
 

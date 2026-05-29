@@ -89,19 +89,8 @@ pub fn write_th2d(w: &mut WBuffer, h: &TH2) {
     let th2d = w.begin_object(4); // TH2D version 4
     let th2 = w.begin_object(5); // TH2 version 5
     write_th1_core(
-        w,
-        &h.name,
-        &h.title,
-        &h.xaxis,
-        &h.yaxis,
-        &h.zaxis,
-        h.ncells,
-        h.entries,
-        h.tsumw,
-        h.tsumw2,
-        h.tsumwx,
-        h.tsumwx2,
-        &[],
+        w, &h.name, &h.title, &h.xaxis, &h.yaxis, &h.zaxis, h.ncells, h.entries, h.tsumw, h.tsumw2,
+        h.tsumwx, h.tsumwx2, &h.sumw2,
     );
     w.be_f64(1.0); // fScalefactor (ROOT default)
     w.be_f64(h.tsumwy);
@@ -146,19 +135,8 @@ pub fn write_th3d(w: &mut WBuffer, h: &TH3) {
     let th3d = w.begin_object(4); // TH3D version 4
     let th3 = w.begin_object(6); // TH3 version 6
     write_th1_core(
-        w,
-        &h.name,
-        &h.title,
-        &h.xaxis,
-        &h.yaxis,
-        &h.zaxis,
-        h.ncells,
-        h.entries,
-        h.tsumw,
-        h.tsumw2,
-        h.tsumwx,
-        h.tsumwx2,
-        &[],
+        w, &h.name, &h.title, &h.xaxis, &h.yaxis, &h.zaxis, h.ncells, h.entries, h.tsumw, h.tsumw2,
+        h.tsumwx, h.tsumwx2, &h.sumw2,
     );
     let att3d = w.begin_object(1); // TAtt3D version 1 (empty base)
     w.end_object(att3d);
@@ -311,19 +289,8 @@ pub fn append_histograms_file(
 
 fn write_th1_base(w: &mut WBuffer, h: &TH1) {
     write_th1_core(
-        w,
-        &h.name,
-        &h.title,
-        &h.xaxis,
-        &h.yaxis,
-        &h.zaxis,
-        h.ncells,
-        h.entries,
-        h.tsumw,
-        h.tsumw2,
-        h.tsumwx,
-        h.tsumwx2,
-        &[],
+        w, &h.name, &h.title, &h.xaxis, &h.yaxis, &h.zaxis, h.ncells, h.entries, h.tsumw, h.tsumw2,
+        h.tsumwx, h.tsumwx2, &h.sumw2,
     );
 }
 
