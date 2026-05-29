@@ -10,6 +10,7 @@
 //! precision; the exact class is preserved in `class_name`.
 
 mod base;
+mod ops;
 
 pub mod axis;
 pub mod th1;
