@@ -42,6 +42,60 @@ pub struct TH1 {
 }
 
 impl TH1 {
+    /// Create an empty `TH1D` with `nbins` uniform bins over `[xmin, xmax)`,
+    /// ready to be filled.
+    pub fn new(name: &str, title: &str, nbins: i32, xmin: f64, xmax: f64) -> TH1 {
+        let cells = (nbins.max(0) as usize) + 2;
+        TH1 {
+            class_name: "TH1D".to_string(),
+            name: name.to_string(),
+            title: title.to_string(),
+            xaxis: TAxis::new("xaxis", nbins, xmin, xmax),
+            yaxis: TAxis::new("yaxis", 1, 0.0, 1.0),
+            zaxis: TAxis::new("zaxis", 1, 0.0, 1.0),
+            ncells: cells as i32,
+            entries: 0.0,
+            tsumw: 0.0,
+            tsumw2: 0.0,
+            tsumwx: 0.0,
+            tsumwx2: 0.0,
+            contents: vec![0.0; cells],
+        }
+    }
+
+    /// Fill the histogram with `x` (weight 1).
+    pub fn fill(&mut self, x: f64) {
+        self.fill_weight(x, 1.0);
+    }
+
+    /// Fill the histogram with `x` and weight `w`, updating bin contents,
+    /// entry count, and the running statistics (ROOT `Fill` semantics: every
+    /// fill increments `fEntries`; the moment sums accumulate for in-range
+    /// fills only).
+    pub fn fill_weight(&mut self, x: f64, w: f64) {
+        let nbins = self.xaxis.nbins.max(0) as usize;
+        let bin = self.xaxis.find_bin(x);
+        if let Some(c) = self.contents.get_mut(bin) {
+            *c += w;
+        }
+        self.entries += 1.0;
+        if (1..=nbins).contains(&bin) {
+            self.tsumw += w;
+            self.tsumw2 += w * w;
+            self.tsumwx += w * x;
+            self.tsumwx2 += w * x * x;
+        }
+    }
+
+    /// Mean of the in-range fills (`fTsumwx / fTsumw`), or 0 if empty.
+    pub fn mean(&self) -> f64 {
+        if self.tsumw != 0.0 {
+            self.tsumwx / self.tsumw
+        } else {
+            0.0
+        }
+    }
+
     pub(crate) fn read(r: &mut RBuffer, class_name: &str, precision: Precision) -> Result<TH1> {
         let (c, contents) = read_th1_object(r, precision)?;
         Ok(TH1 {

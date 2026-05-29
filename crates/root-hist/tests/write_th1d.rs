@@ -6,7 +6,7 @@
 
 use std::path::PathBuf;
 
-use root_hist::{read_th1d, th1d_to_bytes};
+use root_hist::{read_th1d, th1d_to_bytes, TH1};
 use root_io_core::RFile;
 
 fn fixture(name: &str) -> PathBuf {
@@ -51,6 +51,38 @@ fn writes_a_root_file_that_round_trips() {
 
     let h2 = read_th1d(&f2, "h1").expect("read back TH1D");
     assert_eq!(h2, h, "histogram must survive the write→read round-trip");
+}
+
+#[test]
+fn create_fill_save_round_trips() {
+    // Build a histogram from scratch and fill it, as in an analysis loop.
+    let mut h = TH1::new("h", "filled", 5, 0.0, 5.0);
+    h.fill(0.5);
+    h.fill(1.5);
+    h.fill(1.5);
+    h.fill(2.5);
+    h.fill(2.5);
+    h.fill(2.5);
+    h.fill(-1.0); // underflow
+    h.fill(10.0); // overflow
+
+    assert_eq!(h.entries, 8.0, "all fills counted");
+    assert_eq!(
+        h.values(),
+        [1.0, 2.0, 3.0, 0.0, 0.0],
+        "in-range bin contents"
+    );
+    assert_eq!(h.contents[0], 1.0, "underflow");
+    assert_eq!(*h.contents.last().unwrap(), 1.0, "overflow");
+    assert_eq!(h.tsumw, 6.0, "in-range weight sum");
+    assert!((h.mean() - 11.0 / 6.0).abs() < 1e-12, "mean = tsumwx/tsumw");
+
+    // Save and read back through our own reader.
+    let out = std::path::PathBuf::from("/tmp/rootrs_filled_th1d.root");
+    root_hist::write_th1d_file(&out, &h, 0).expect("write");
+    let f = RFile::open(&out).expect("reopen");
+    let h2 = read_th1d(&f, "h").expect("read back");
+    assert_eq!(h2, h, "filled histogram must round-trip");
 }
 
 #[test]

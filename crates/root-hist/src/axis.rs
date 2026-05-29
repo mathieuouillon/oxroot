@@ -22,6 +22,43 @@ pub struct TAxis {
 }
 
 impl TAxis {
+    /// Create a uniform axis of `nbins` bins over `[xmin, xmax)`.
+    pub fn new(name: &str, nbins: i32, xmin: f64, xmax: f64) -> TAxis {
+        TAxis {
+            name: name.to_string(),
+            title: String::new(),
+            nbins,
+            xmin,
+            xmax,
+            xbins: Vec::new(),
+        }
+    }
+
+    /// Find the bin for value `x`: 0 = underflow, `1..=nbins` = in range,
+    /// `nbins + 1` = overflow. Handles uniform and variable-width axes.
+    pub fn find_bin(&self, x: f64) -> usize {
+        let n = self.nbins.max(0) as usize;
+        if n == 0 {
+            return 0;
+        }
+        if x < self.xmin {
+            return 0;
+        }
+        if x >= self.xmax {
+            return n + 1;
+        }
+        if self.xbins.is_empty() {
+            let width = (self.xmax - self.xmin) / n as f64;
+            (1 + ((x - self.xmin) / width).floor() as usize).min(n + 1)
+        } else {
+            // Variable edges: largest i with xbins[i] <= x, giving bin i+1.
+            match self.xbins.partition_point(|&edge| edge <= x) {
+                0 => 0,
+                i => i.min(n + 1),
+            }
+        }
+    }
+
     /// Read a `TAxis` from `r` (positioned at the axis's `{byte-count, version}`
     /// header), leaving the cursor at the axis's end.
     pub fn read(r: &mut RBuffer) -> Result<TAxis> {
