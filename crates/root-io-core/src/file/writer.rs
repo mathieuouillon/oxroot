@@ -30,14 +30,16 @@ pub struct ObjectRecord {
 }
 
 /// Length of a small-format `TKey` header for the given strings.
-fn key_len(class: &str, name: &str, title: &str) -> u16 {
+pub fn key_len(class: &str, name: &str, title: &str) -> u16 {
     // Nbytes(4)+version(2)+ObjLen(4)+Datime(4)+KeyLen(2)+Cycle(2)+SeekKey(4)
     // +SeekPdir(4) = 26, then three length-prefixed strings.
     (26 + (1 + class.len()) + (1 + name.len()) + (1 + title.len())) as u16
 }
 
-/// Write a small-format `TKey` header (no payload).
-fn write_key_header(
+/// Write a small-format (32-bit seek) `TKey` header (no payload). `obj_len` is
+/// the uncompressed object size; the on-disk `Nbytes` is `KeyLen + obj_len`
+/// (i.e. the object is stored uncompressed).
+pub fn write_key_header(
     w: &mut WBuffer,
     class: &str,
     name: &str,

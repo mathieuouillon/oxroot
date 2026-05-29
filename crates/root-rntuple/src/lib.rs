@@ -16,6 +16,7 @@ pub mod header;
 pub mod page;
 pub mod pagelist;
 pub mod reader;
+pub mod writer;
 
 pub use anchor::{RNTupleAnchor, ANCHOR_CLASS};
 pub use column::ColumnType;
@@ -26,3 +27,4 @@ pub use header::{ColumnDescriptor, FieldDescriptor, Header, StructRole};
 pub use page::{read_column, ColumnValues};
 pub use pagelist::{ClusterPages, ClusterSummary, ColumnPages, PageInfo, PageList};
 pub use reader::RNTuple;
+pub use writer::{rntuple_file_bytes, write_rntuple_file, ScalarColumn, ScalarField};

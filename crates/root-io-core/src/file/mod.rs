@@ -13,4 +13,4 @@ pub use free::{read_free, FreeSegment};
 pub use header::{FileHeader, TUuid, BIG_FILE_VERSION, MAGIC};
 pub use key::{TDatime, TKey};
 pub use rfile::RFile;
-pub use writer::{write_root_file, ObjectRecord};
+pub use writer::{key_len, write_key_header, write_root_file, ObjectRecord};
