@@ -13,6 +13,8 @@ use root_io_core::{write_root_file, ObjectRecord};
 use crate::axis::TAxis;
 use crate::th1::TH1;
 use crate::th2::TH2;
+use crate::th3::TH3;
+use crate::tprofile::TProfile;
 
 /// Write a single `TH1D` into a new ROOT file at `path`. `compression` is a
 /// ROOT setting (`algorithm*100 + level`, 0 = none; e.g. 505 = Zstd level 5).
@@ -74,8 +76,19 @@ pub fn write_th2d(w: &mut WBuffer, h: &TH2) {
     let th2d = w.begin_object(4); // TH2D version 4
     let th2 = w.begin_object(5); // TH2 version 5
     write_th1_core(
-        w, &h.name, &h.title, &h.xaxis, &h.yaxis, &h.zaxis, h.ncells, h.entries, h.tsumw, h.tsumw2,
-        h.tsumwx, h.tsumwx2,
+        w,
+        &h.name,
+        &h.title,
+        &h.xaxis,
+        &h.yaxis,
+        &h.zaxis,
+        h.ncells,
+        h.entries,
+        h.tsumw,
+        h.tsumw2,
+        h.tsumwx,
+        h.tsumwx2,
+        &[],
     );
     w.be_f64(1.0); // fScalefactor (ROOT default)
     w.be_f64(h.tsumwy);
@@ -93,12 +106,122 @@ pub fn th2d_to_bytes(h: &TH2) -> Vec<u8> {
     w.into_vec()
 }
 
+/// Write a single `TH3D` into a new ROOT file at `path`. `compression` is a
+/// ROOT setting (`algorithm*100 + level`, 0 = none; e.g. 505 = Zstd level 5).
+pub fn write_th3d_file(path: &Path, h: &TH3, compression: u32) -> std::io::Result<()> {
+    let file_name = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("file.root");
+    let record = ObjectRecord {
+        class_name: "TH3D".to_string(),
+        name: h.name.clone(),
+        title: h.title.clone(),
+        object: th3d_to_bytes(h),
+    };
+    std::fs::write(path, write_root_file(file_name, &[record], compression))
+}
+
+/// Serialize a `TH3D` object (including its leading byte-count/version header)
+/// into `w`, byte-for-byte as ROOT writes it. Layout: `TH3D{ TH3{ TH1{…},
+/// TAtt3D, fTsumwy, fTsumwy2, fTsumwxy, fTsumwz, fTsumwz2, fTsumwxz, fTsumwyz },
+/// TArrayD }`.
+pub fn write_th3d(w: &mut WBuffer, h: &TH3) {
+    let th3d = w.begin_object(4); // TH3D version 4
+    let th3 = w.begin_object(6); // TH3 version 6
+    write_th1_core(
+        w,
+        &h.name,
+        &h.title,
+        &h.xaxis,
+        &h.yaxis,
+        &h.zaxis,
+        h.ncells,
+        h.entries,
+        h.tsumw,
+        h.tsumw2,
+        h.tsumwx,
+        h.tsumwx2,
+        &[],
+    );
+    let att3d = w.begin_object(1); // TAtt3D version 1 (empty base)
+    w.end_object(att3d);
+    w.be_f64(h.tsumwy);
+    w.be_f64(h.tsumwy2);
+    w.be_f64(h.tsumwxy);
+    w.be_f64(h.tsumwz);
+    w.be_f64(h.tsumwz2);
+    w.be_f64(h.tsumwxz);
+    w.be_f64(h.tsumwyz);
+    w.end_object(th3);
+    write_tarrayd(w, &h.contents); // TArrayD base: bin contents, inline
+    w.end_object(th3d);
+}
+
+/// Serialize a `TH3D` object to a fresh byte vector.
+pub fn th3d_to_bytes(h: &TH3) -> Vec<u8> {
+    let mut w = WBuffer::new();
+    write_th3d(&mut w, h);
+    w.into_vec()
+}
+
+/// Write a single `TProfile` into a new ROOT file at `path`. `compression` is a
+/// ROOT setting (`algorithm*100 + level`, 0 = none; e.g. 505 = Zstd level 5).
+pub fn write_tprofile_file(path: &Path, h: &TProfile, compression: u32) -> std::io::Result<()> {
+    let file_name = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("file.root");
+    let record = ObjectRecord {
+        class_name: "TProfile".to_string(),
+        name: h.name.clone(),
+        title: h.title.clone(),
+        object: tprofile_to_bytes(h),
+    };
+    std::fs::write(path, write_root_file(file_name, &[record], compression))
+}
+
+/// Serialize a `TProfile` object (including its leading byte-count/version
+/// header) into `w`. Layout: `TProfile{ TH1D{ TH1{…, fSumw2=Σwy²}, TArrayD=Σwy },
+/// fBinEntries, fErrorMode, fYmin, fYmax, fTsumwy, fTsumwy2, fBinSumw2 }`.
+pub fn write_tprofile(w: &mut WBuffer, h: &TProfile) {
+    // A 1-D profile keeps degenerate y/z axes, as ROOT's TH1 constructor does.
+    let yaxis = TAxis::new("yaxis", 1, 0.0, 1.0);
+    let zaxis = TAxis::new("zaxis", 1, 0.0, 1.0);
+
+    let tp = w.begin_object(7); // TProfile version 7
+    let th1d = w.begin_object(3); // TH1D version 3
+    write_th1_core(
+        w, &h.name, &h.title, &h.xaxis, &yaxis, &zaxis, h.ncells, h.entries, h.tsumw, h.tsumw2,
+        h.tsumwx, h.tsumwx2, &h.sumy2,
+    );
+    write_tarrayd(w, &h.sums); // TH1D TArrayD base: per-bin sum of w*y
+    w.end_object(th1d);
+    write_tarrayd(w, &h.bin_entries); // fBinEntries
+    w.be_i32(h.error_mode);
+    w.be_f64(h.ymin);
+    w.be_f64(h.ymax);
+    w.be_f64(h.tsumwy);
+    w.be_f64(h.tsumwy2);
+    write_tarrayd(w, &h.bin_sumw2); // fBinSumw2
+    w.end_object(tp);
+}
+
+/// Serialize a `TProfile` object to a fresh byte vector.
+pub fn tprofile_to_bytes(h: &TProfile) -> Vec<u8> {
+    let mut w = WBuffer::new();
+    write_tprofile(&mut w, h);
+    w.into_vec()
+}
+
 /// A histogram to store in a multi-object file via [`write_histograms_file`].
 pub enum Hist<'a> {
     /// A 1-D histogram (written as `TH1D`).
     Th1(&'a TH1),
     /// A 2-D histogram (written as `TH2D`).
     Th2(&'a TH2),
+    /// A 3-D histogram (written as `TH3D`).
+    Th3(&'a TH3),
 }
 
 impl Hist<'_> {
@@ -115,6 +238,12 @@ impl Hist<'_> {
                 name: h.name.clone(),
                 title: h.title.clone(),
                 object: th2d_to_bytes(h),
+            },
+            Hist::Th3(h) => ObjectRecord {
+                class_name: "TH3D".to_string(),
+                name: h.name.clone(),
+                title: h.title.clone(),
+                object: th3d_to_bytes(h),
             },
         }
     }
@@ -134,8 +263,19 @@ pub fn write_histograms_file(path: &Path, hists: &[Hist], compression: u32) -> s
 
 fn write_th1_base(w: &mut WBuffer, h: &TH1) {
     write_th1_core(
-        w, &h.name, &h.title, &h.xaxis, &h.yaxis, &h.zaxis, h.ncells, h.entries, h.tsumw, h.tsumw2,
-        h.tsumwx, h.tsumwx2,
+        w,
+        &h.name,
+        &h.title,
+        &h.xaxis,
+        &h.yaxis,
+        &h.zaxis,
+        h.ncells,
+        h.entries,
+        h.tsumw,
+        h.tsumw2,
+        h.tsumwx,
+        h.tsumwx2,
+        &[],
     );
 }
 
@@ -156,6 +296,7 @@ fn write_th1_core(
     tsumw2: f64,
     tsumwx: f64,
     tsumwx2: f64,
+    fsumw2: &[f64],
 ) {
     let th1 = w.begin_object(8); // TH1 version 8
 
@@ -179,7 +320,7 @@ fn write_th1_core(
     w.be_f64(-1111.0); // fMinimum
     w.be_f64(0.0); // fNormFactor
     write_tarrayd(w, &[]); // fContour
-    write_tarrayd(w, &[]); // fSumw2
+    write_tarrayd(w, fsumw2); // fSumw2 (per-bin sum of squared weights)
     w.string(""); // fOption
     write_empty_tlist(w); // fFunctions
     w.be_i32(0); // fBufferSize

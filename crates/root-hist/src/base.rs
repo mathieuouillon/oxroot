@@ -70,6 +70,9 @@ pub struct TH1Core {
     pub tsumwx: f64,
     /// Sum of weight*x^2 (`fTsumwx2`).
     pub tsumwx2: f64,
+    /// Per-bin sum of squared weights (`fSumw2`); empty for an unweighted
+    /// histogram, but used by `TProfile` to store the per-bin sum of `y^2`.
+    pub sumw2: Vec<f64>,
 }
 
 /// Read a `TH1` base object (its header, the `TNamed`/`TAtt*` bases, and the
@@ -93,6 +96,11 @@ pub(crate) fn read_th1_base(r: &mut RBuffer) -> Result<TH1Core> {
     let tsumw2 = r.be_f64()?;
     let tsumwx = r.be_f64()?;
     let tsumwx2 = r.be_f64()?;
+    let _maximum = r.be_f64()?;
+    let _minimum = r.be_f64()?;
+    let _norm_factor = r.be_f64()?;
+    let _contour = read_tarray(r, Precision::Double)?; // fContour
+    let sumw2 = read_tarray(r, Precision::Double)?; // fSumw2
 
     let end = th1
         .end
@@ -111,6 +119,7 @@ pub(crate) fn read_th1_base(r: &mut RBuffer) -> Result<TH1Core> {
         tsumw2,
         tsumwx,
         tsumwx2,
+        sumw2,
     })
 }
 

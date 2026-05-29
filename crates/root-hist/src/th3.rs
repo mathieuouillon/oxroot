@@ -36,6 +36,26 @@ pub struct TH3 {
     pub entries: f64,
     /// Sum of weights (`fTsumw`).
     pub tsumw: f64,
+    /// Sum of weight^2 (`fTsumw2`).
+    pub tsumw2: f64,
+    /// Sum of weight*x (`fTsumwx`).
+    pub tsumwx: f64,
+    /// Sum of weight*x^2 (`fTsumwx2`).
+    pub tsumwx2: f64,
+    /// Sum of weight*y (`fTsumwy`).
+    pub tsumwy: f64,
+    /// Sum of weight*y^2 (`fTsumwy2`).
+    pub tsumwy2: f64,
+    /// Sum of weight*x*y (`fTsumwxy`).
+    pub tsumwxy: f64,
+    /// Sum of weight*z (`fTsumwz`).
+    pub tsumwz: f64,
+    /// Sum of weight*z^2 (`fTsumwz2`).
+    pub tsumwz2: f64,
+    /// Sum of weight*x*z (`fTsumwxz`).
+    pub tsumwxz: f64,
+    /// Sum of weight*y*z (`fTsumwyz`).
+    pub tsumwyz: f64,
     /// Bin contents including flow (length `ncells`, x fastest then y then z).
     pub contents: Vec<f64>,
 }
@@ -47,10 +67,13 @@ impl TH3 {
 
         let c = read_th1_base(r)?;
         skip_versioned(r)?; // TAtt3D base (empty)
-        for _ in 0..7 {
-            // fTsumwy, fTsumwy2, fTsumwxy, fTsumwz, fTsumwz2, fTsumwxz, fTsumwyz
-            let _stat = r.be_f64()?;
-        }
+        let tsumwy = r.be_f64()?;
+        let tsumwy2 = r.be_f64()?;
+        let tsumwxy = r.be_f64()?;
+        let tsumwz = r.be_f64()?;
+        let tsumwz2 = r.be_f64()?;
+        let tsumwxz = r.be_f64()?;
+        let tsumwyz = r.be_f64()?;
 
         let end = th3
             .end
@@ -68,6 +91,16 @@ impl TH3 {
             ncells: c.ncells,
             entries: c.entries,
             tsumw: c.tsumw,
+            tsumw2: c.tsumw2,
+            tsumwx: c.tsumwx,
+            tsumwx2: c.tsumwx2,
+            tsumwy,
+            tsumwy2,
+            tsumwxy,
+            tsumwz,
+            tsumwz2,
+            tsumwxz,
+            tsumwyz,
             contents,
         })
     }
@@ -104,6 +137,110 @@ impl TH3 {
                     .collect()
             })
             .collect()
+    }
+
+    /// Create an empty `TH3D` with uniform axes. Mirrors ROOT's `TH3D`
+    /// constructor: `nx` bins over `[xlo, xhi)`, etc.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        name: &str,
+        title: &str,
+        nx: i32,
+        xlo: f64,
+        xhi: f64,
+        ny: i32,
+        ylo: f64,
+        yhi: f64,
+        nz: i32,
+        zlo: f64,
+        zhi: f64,
+    ) -> TH3 {
+        let ncells = (nx.max(0) + 2) * (ny.max(0) + 2) * (nz.max(0) + 2);
+        TH3 {
+            class_name: "TH3D".to_string(),
+            name: name.to_string(),
+            title: title.to_string(),
+            xaxis: TAxis::new("xaxis", nx, xlo, xhi),
+            yaxis: TAxis::new("yaxis", ny, ylo, yhi),
+            zaxis: TAxis::new("zaxis", nz, zlo, zhi),
+            ncells,
+            entries: 0.0,
+            tsumw: 0.0,
+            tsumw2: 0.0,
+            tsumwx: 0.0,
+            tsumwx2: 0.0,
+            tsumwy: 0.0,
+            tsumwy2: 0.0,
+            tsumwxy: 0.0,
+            tsumwz: 0.0,
+            tsumwz2: 0.0,
+            tsumwxz: 0.0,
+            tsumwyz: 0.0,
+            contents: vec![0.0; ncells.max(0) as usize],
+        }
+    }
+
+    /// Fill `(x, y, z)` with unit weight.
+    pub fn fill(&mut self, x: f64, y: f64, z: f64) {
+        self.fill_weight(x, y, z, 1.0);
+    }
+
+    /// Fill `(x, y, z)` with weight `w`, matching ROOT's `TH3::Fill`: every fill
+    /// counts toward `fEntries`, the cell (including flow) is incremented, and
+    /// the moment sums accumulate only when all three coordinates are in range.
+    pub fn fill_weight(&mut self, x: f64, y: f64, z: f64, w: f64) {
+        let (nx, ny, nz) = (self.nx(), self.ny(), self.nz());
+        let binx = self.xaxis.find_bin(x);
+        let biny = self.yaxis.find_bin(y);
+        let binz = self.zaxis.find_bin(z);
+        let bin = binx + (nx + 2) * (biny + (ny + 2) * binz);
+        if let Some(c) = self.contents.get_mut(bin) {
+            *c += w;
+        }
+        self.entries += 1.0;
+
+        let in_range =
+            (1..=nx).contains(&binx) && (1..=ny).contains(&biny) && (1..=nz).contains(&binz);
+        if in_range {
+            self.tsumw += w;
+            self.tsumw2 += w * w;
+            self.tsumwx += w * x;
+            self.tsumwx2 += w * x * x;
+            self.tsumwy += w * y;
+            self.tsumwy2 += w * y * y;
+            self.tsumwxy += w * x * y;
+            self.tsumwz += w * z;
+            self.tsumwz2 += w * z * z;
+            self.tsumwxz += w * x * z;
+            self.tsumwyz += w * y * z;
+        }
+    }
+
+    /// Mean of the x projection (`fTsumwx / fTsumw`), 0 when empty.
+    pub fn mean_x(&self) -> f64 {
+        if self.tsumw == 0.0 {
+            0.0
+        } else {
+            self.tsumwx / self.tsumw
+        }
+    }
+
+    /// Mean of the y projection (`fTsumwy / fTsumw`), 0 when empty.
+    pub fn mean_y(&self) -> f64 {
+        if self.tsumw == 0.0 {
+            0.0
+        } else {
+            self.tsumwy / self.tsumw
+        }
+    }
+
+    /// Mean of the z projection (`fTsumwz / fTsumw`), 0 when empty.
+    pub fn mean_z(&self) -> f64 {
+        if self.tsumw == 0.0 {
+            0.0
+        } else {
+            self.tsumwz / self.tsumw
+        }
     }
 }
 
