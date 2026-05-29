@@ -20,7 +20,9 @@ pub mod streamer;
 pub mod streamer_info;
 
 pub use error::{Error, Result};
-pub use file::{Directory, FileHeader, FreeSegment, RFile, TDatime, TKey, TUuid};
+pub use file::{
+    write_root_file, Directory, FileHeader, FreeSegment, ObjectRecord, RFile, TDatime, TKey, TUuid,
+};
 pub use streamer::{
     read_tnamed, read_tobject, skip_versioned, write_tnamed, write_tobject, TNamed, TObjectHeader,
 };

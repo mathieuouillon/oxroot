@@ -23,4 +23,4 @@ pub use th1::{read_th1, read_th1d, read_th1f, TH1};
 pub use th2::{read_th2, read_th2d, read_th2f, TH2};
 pub use th3::{read_th3, read_th3d, read_th3f, TH3};
 pub use tprofile::{read_tprofile, TProfile};
-pub use write::{th1d_to_bytes, write_th1d};
+pub use write::{th1d_to_bytes, write_th1d, write_th1d_file};

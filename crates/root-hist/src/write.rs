@@ -4,11 +4,29 @@
 //! against a ROOT-written fixture), filling the data-bearing members from a
 //! [`TH1`] and the cosmetic/auxiliary members with ROOT's defaults.
 
+use std::path::Path;
+
 use root_io_core::buffer::WBuffer;
 use root_io_core::streamer::{write_tnamed, write_tobject};
+use root_io_core::{write_root_file, ObjectRecord};
 
 use crate::axis::TAxis;
 use crate::th1::TH1;
+
+/// Write a single `TH1D` into a new ROOT file at `path`.
+pub fn write_th1d_file(path: &Path, h: &TH1) -> std::io::Result<()> {
+    let file_name = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("file.root");
+    let record = ObjectRecord {
+        class_name: "TH1D".to_string(),
+        name: h.name.clone(),
+        title: h.title.clone(),
+        object: th1d_to_bytes(h),
+    };
+    std::fs::write(path, write_root_file(file_name, &[record]))
+}
 
 // `fBits` values ROOT writes for the embedded TObjects in a fresh histogram.
 const HIST_BITS: u32 = 0x0300_0008;

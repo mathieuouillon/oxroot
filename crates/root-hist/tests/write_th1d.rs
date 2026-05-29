@@ -31,3 +31,24 @@ fn serializes_th1d_byte_identical_to_root() {
         "serialized TH1D must match ROOT byte-for-byte"
     );
 }
+
+#[test]
+fn writes_a_root_file_that_round_trips() {
+    let f = RFile::open(fixture("th1d_uncompressed.root")).expect("open fixture");
+    let h = read_th1d(&f, "h1").expect("read TH1D");
+
+    // Write a complete .root file, then read it back with our own reader.
+    let out = std::path::PathBuf::from("/tmp/rootrs_written_th1d.root");
+    root_hist::write_th1d_file(&out, &h).expect("write file");
+
+    let f2 = RFile::open(&out).expect("reopen written file");
+    let keys: Vec<(&str, &str)> = f2
+        .keys()
+        .iter()
+        .map(|k| (k.name.as_str(), k.class_name.as_str()))
+        .collect();
+    assert_eq!(keys, vec![("h1", "TH1D")]);
+
+    let h2 = read_th1d(&f2, "h1").expect("read back TH1D");
+    assert_eq!(h2, h, "histogram must survive the write→read round-trip");
+}
