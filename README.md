@@ -63,10 +63,10 @@ dependencies are added as later milestones land.
   (`Int32`/`Real32`/`Real64`) — header/page-list/footer envelopes + XXH3 anchor
   — that both official ROOT (`RNTupleReader`) and uproot read with correct
   values._
-- **M6** — Round-trip / interop hardening. _In progress: write-side Zstd
-  compression ✅ (ROOT+uproot read root-rs's compressed files). Remaining:
-  streamer-info emission, `update` mode, multi-cluster, >2 GiB, RNTuple write
-  compression._
+- **M6** — Round-trip / interop hardening. _In progress: histogram + RNTuple
+  Zstd compression ✅; self-describing `TStreamerInfo` emission ✅ (ROOT reads
+  our files with no "no StreamerInfo" warning). Remaining: `update` mode,
+  multi-cluster RNTuple, >2 GiB._
 
 ## Analysis API
 
@@ -79,12 +79,14 @@ ROOT or uproot.
   `write_th1d_file`/`write_th2d_file`/`write_th3d_file`/`write_tprofile_file`, or
   several at once (mixed dimensions) with `write_histograms_file`. TH1D/TH2D are
   byte-identical to ROOT; TH3D/TProfile round-trip real ROOT data and read back
-  in official ROOT (with correct bin errors) and uproot. ✅
-- **RNTuple** — `write_rntuple_file(path, name, &[Field])` writes `bool`, 32/64-bit
-  ints, `f32`/`f64`, `std::string`, and `std::vector<T>` columns; validated with
-  `RNTupleReader` and uproot. ✅
+  in official ROOT (with correct bin errors) and uproot. Written files embed a
+  `TStreamerInfo` list, so they are self-describing. ✅
+- **RNTuple** — `write_rntuple_file(path, name, &[Field], compression)` writes
+  `bool`, 32/64-bit ints, `f32`/`f64`, `std::string`, and `std::vector<T>`
+  columns, optionally Zstd-compressed; validated with `RNTupleReader` and
+  uproot. ✅
 - _Follow-ups: float-precision (`TH1F`/`TH2F`/…) write, weighted-histogram
-  `Sumw2`, multi-cluster/compressed RNTuple write._
+  `Sumw2`, multi-cluster RNTuple write, `update` mode._
 
 ## License
 
