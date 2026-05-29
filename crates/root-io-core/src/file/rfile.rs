@@ -95,6 +95,22 @@ impl RFile {
         parse_streamer_info(&object, key.key_len as usize)
     }
 
+    /// The decompressed streamer-info object (the `TList<TStreamerInfo>` bytes at
+    /// `fSeekInfo`), or `None` if the file has none. Used to carry a file's
+    /// streamer info across a rewrite.
+    pub fn streamer_info_object(&self) -> Result<Option<Vec<u8>>> {
+        if self.header.seek_info == 0 || self.header.nbytes_info == 0 {
+            return Ok(None);
+        }
+        let mut r = RBuffer::new(&self.data);
+        r.seek(self.header.seek_info as usize)?;
+        let key = TKey::read(&mut r)?;
+        let payload = &self.data[key.payload_range()];
+        let object = root_compress::decompress(payload, key.obj_len as usize)
+            .map_err(|e| Error::Format(format!("decompressing streamer info: {e}")))?;
+        Ok(Some(object))
+    }
+
     /// The raw file bytes (used by object readers in later milestones).
     pub fn data(&self) -> &[u8] {
         &self.data

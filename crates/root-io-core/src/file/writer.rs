@@ -1,13 +1,17 @@
 //! Writing a minimal, ROOT-compatible TFile container.
 //!
 //! Produces a small-format (32-bit) file: header, the root directory's name
-//! key + `TDirectory` record, one `TKey` + object per supplied object, and the
-//! directory key list. The free list and streamer info are omitted (a reader
-//! with a built-in model for the stored class — e.g. uproot for `TH1D` — does
-//! not need them); a baked streamer info can be added later for strict ROOT
-//! readers. All offsets are back-patched once the layout is known.
+//! key + `TDirectory` record, one `TKey` + object per supplied object, an
+//! optional streamer-info record, and the directory key list. The free list is
+//! kept empty. All offsets are back-patched once the layout is known.
+//! [`update_root_file`] re-reads an existing file and rewrites it with extra
+//! objects appended.
 
 use crate::buffer::WBuffer;
+use crate::error::{Error, Result};
+
+use super::key::TKey;
+use super::rfile::RFile;
 
 /// A fixed creation/modification timestamp (`TDatime`); readers don't validate it.
 const DATIME: u32 = 0x7d7a_79ca;
@@ -51,13 +55,40 @@ pub fn write_key_header(
     seek_key: u64,
     seek_pdir: u64,
 ) {
+    write_key_header_cycle(
+        w,
+        class,
+        name,
+        title,
+        obj_len,
+        payload_len,
+        seek_key,
+        seek_pdir,
+        1,
+    );
+}
+
+/// Like [`write_key_header`], but with an explicit `cycle` (ROOT bumps the cycle
+/// when an object is rewritten under an existing name; the highest cycle wins).
+#[allow(clippy::too_many_arguments)]
+pub fn write_key_header_cycle(
+    w: &mut WBuffer,
+    class: &str,
+    name: &str,
+    title: &str,
+    obj_len: u32,
+    payload_len: u32,
+    seek_key: u64,
+    seek_pdir: u64,
+    cycle: u16,
+) {
     let klen = key_len(class, name, title);
     w.be_i32((klen as u32 + payload_len) as i32); // Nbytes = KeyLen + on-disk payload
     w.be_u16(4); // key version (small format)
     w.be_u32(obj_len);
     w.be_u32(DATIME);
     w.be_u16(klen);
-    w.be_u16(1); // cycle
+    w.be_u16(cycle);
     w.be_u32(seek_key as u32);
     w.be_u32(seek_pdir as u32);
     w.string(class);
@@ -104,6 +135,19 @@ pub fn write_root_file_with_streamers(
         .map(|o| on_disk_payload(&o.object, compression))
         .collect();
     let streamer_payload = streamer_info.map(|si| on_disk_payload(si, compression));
+
+    // Per-object cycle: the n-th object sharing a name gets cycle n (1-based), so
+    // re-adding an existing name yields a higher, newer cycle (as ROOT does).
+    let mut seen: std::collections::HashMap<&str, u16> = std::collections::HashMap::new();
+    let cycles: Vec<u16> = objects
+        .iter()
+        .map(|o| {
+            let c = seen.entry(o.name.as_str()).or_insert(0);
+            *c += 1;
+            *c
+        })
+        .collect();
+
     let mut w = WBuffer::new();
 
     // --- File header (100 bytes; pointers patched at the end). ---
@@ -160,7 +204,7 @@ pub fn write_root_file_with_streamers(
     let mut seeks = Vec::with_capacity(objects.len());
     for (i, obj) in objects.iter().enumerate() {
         let seek = w.len();
-        write_key_header(
+        write_key_header_cycle(
             &mut w,
             &obj.class_name,
             &obj.name,
@@ -169,6 +213,7 @@ pub fn write_root_file_with_streamers(
             payloads[i].len() as u32,
             seek as u64,
             100,
+            cycles[i],
         );
         w.bytes(&payloads[i]);
         seeks.push(seek);
@@ -217,7 +262,7 @@ pub fn write_root_file_with_streamers(
     );
     w.be_i32(objects.len() as i32); // nkeys
     for (i, obj) in objects.iter().enumerate() {
-        write_key_header(
+        write_key_header_cycle(
             &mut w,
             &obj.class_name,
             &obj.name,
@@ -226,6 +271,7 @@ pub fn write_root_file_with_streamers(
             payloads[i].len() as u32,
             seeks[i] as u64,
             100,
+            cycles[i],
         );
     }
     let keylist_nbytes = key_len(DIR_CLASS, file_name, "") as u32 + keylist_obj_len;
@@ -243,4 +289,69 @@ pub fn write_root_file_with_streamers(
     w.patch_be_u32(p_dir_seek_keys, keylist_seek as u32);
 
     w.into_vec()
+}
+
+/// Append `new_objects` to an existing ROOT file (`existing` bytes), returning a
+/// new file holding the existing objects plus the new ones. `file_name` is the
+/// root directory's name; `compression` applies to all object payloads.
+///
+/// Existing objects are copied (decompressed, then re-emitted); an added object
+/// whose name matches an existing one gets a higher, newer cycle, as ROOT does.
+/// The file's existing streamer info is preserved unless `streamer_info` is
+/// given, in which case that replaces it.
+///
+/// This rewrites the whole file rather than appending in place, so it does not
+/// support files containing an RNTuple (whose anchor stores absolute file
+/// offsets that a rewrite would invalidate); such files return an error.
+pub fn update_root_file(
+    existing: &[u8],
+    file_name: &str,
+    new_objects: &[ObjectRecord],
+    compression: u32,
+    streamer_info: Option<&[u8]>,
+) -> Result<Vec<u8>> {
+    let file = RFile::from_bytes(existing.to_vec())?;
+
+    // Copy existing objects, ordered by ascending cycle so the cycle-by-position
+    // assignment in the rewrite reproduces (or extends) their cycles.
+    let mut keys: Vec<&TKey> = file.keys().iter().collect();
+    keys.sort_by_key(|k| k.cycle);
+
+    let mut objects: Vec<ObjectRecord> = Vec::with_capacity(keys.len() + new_objects.len());
+    for key in keys {
+        if key.class_name == "ROOT::RNTuple" {
+            return Err(Error::Format(
+                "updating a file that contains an RNTuple is not supported \
+                 (its anchor holds absolute file offsets)"
+                    .into(),
+            ));
+        }
+        let payload = &file.data()[key.payload_range()];
+        let object = root_compress::decompress(payload, key.obj_len as usize)
+            .map_err(|e| Error::Format(format!("decompressing {:?}: {e}", key.name)))?;
+        objects.push(ObjectRecord {
+            class_name: key.class_name.clone(),
+            name: key.name.clone(),
+            title: key.title.clone(),
+            object,
+        });
+    }
+    for o in new_objects {
+        objects.push(ObjectRecord {
+            class_name: o.class_name.clone(),
+            name: o.name.clone(),
+            title: o.title.clone(),
+            object: o.object.clone(),
+        });
+    }
+
+    let existing_si = file.streamer_info_object()?;
+    let si = streamer_info.or(existing_si.as_deref());
+
+    Ok(write_root_file_with_streamers(
+        file_name,
+        &objects,
+        compression,
+        si,
+    ))
 }

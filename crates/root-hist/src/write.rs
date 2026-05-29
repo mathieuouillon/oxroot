@@ -8,7 +8,7 @@ use std::path::Path;
 
 use root_io_core::buffer::WBuffer;
 use root_io_core::streamer::{write_tnamed, write_tobject};
-use root_io_core::{write_root_file_with_streamers, ObjectRecord};
+use root_io_core::{update_root_file, write_root_file_with_streamers, ObjectRecord};
 
 use crate::axis::TAxis;
 use crate::th1::TH1;
@@ -281,6 +281,32 @@ pub fn write_histograms_file(path: &Path, hists: &[Hist], compression: u32) -> s
         path,
         write_root_file_with_streamers(file_name, &records, compression, Some(HIST_STREAMER_INFO)),
     )
+}
+
+/// Append histograms to an existing ROOT file at `path`, rewriting it with the
+/// existing objects plus the new ones (each becomes a key). A new histogram
+/// whose name matches an existing one is stored at a higher cycle, as ROOT does.
+/// Errors if the file contains an RNTuple (see [`update_root_file`]).
+pub fn append_histograms_file(
+    path: &Path,
+    hists: &[Hist],
+    compression: u32,
+) -> std::io::Result<()> {
+    let file_name = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("file.root");
+    let existing = std::fs::read(path)?;
+    let records: Vec<ObjectRecord> = hists.iter().map(Hist::record).collect();
+    let bytes = update_root_file(
+        &existing,
+        file_name,
+        &records,
+        compression,
+        Some(HIST_STREAMER_INFO),
+    )
+    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
+    std::fs::write(path, bytes)
 }
 
 fn write_th1_base(w: &mut WBuffer, h: &TH1) {
