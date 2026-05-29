@@ -1,9 +1,9 @@
 //! Reading and decoding RNTuple pages into typed column values.
 //!
 //! A page's on-disk bytes are (optionally) compressed and (optionally) followed
-//! by an XXH3-64 checksum. Once decompressed, elements are decoded according to
-//! the column type. This module covers the non-split fixed-width types; split,
-//! zigzag/delta and truncated/quantized encodings are added as needed.
+//! by an XXH3-64 checksum. Once decompressed, multi-byte split columns are
+//! byte-transposed back ("unsplit"), then signed-integer columns are
+//! zigzag-decoded and index columns are delta-decoded (cumulative sum).
 
 use root_io_core::error::{Error, Result};
 
@@ -17,13 +17,15 @@ pub enum ColumnValues {
     Bits(Vec<bool>),
     /// `Char`/`Byte`/`Int8`/`UInt8` columns.
     Bytes(Vec<u8>),
-    /// `Int32` columns.
+    /// 32-bit signed integer columns (`Int32`, `SplitInt32`).
     I32(Vec<i32>),
-    /// `Index64`/`UInt64` columns.
+    /// 64-bit signed integer columns (`Int64`, `SplitInt64`).
+    I64(Vec<i64>),
+    /// Unsigned 64-bit columns: `UInt64`, and decoded `Index*` offsets.
     U64(Vec<u64>),
-    /// `Real32` columns.
+    /// 32-bit float columns (`Real32`, `SplitReal32`).
     F32(Vec<f32>),
-    /// `Real64` columns.
+    /// 64-bit float columns (`Real64`, `SplitReal64`).
     F64(Vec<f64>),
 }
 
@@ -63,6 +65,40 @@ fn read_page_bytes(data: &[u8], page: &PageInfo, bits: u16) -> Result<Vec<u8>> {
         .map_err(|e| Error::Format(format!("decompressing RNTuple page: {e}")))
 }
 
+/// Invert RNTuple "split" (byte-transposed) storage: byte `j` of element `i`
+/// lives at `raw[j * n + i]`.
+fn unsplit(raw: &[u8], n: usize, width: usize) -> Vec<u8> {
+    let mut out = vec![0u8; n * width];
+    for j in 0..width {
+        let plane = &raw[j * n..(j + 1) * n];
+        for (i, &b) in plane.iter().enumerate() {
+            out[i * width + j] = b;
+        }
+    }
+    out
+}
+
+/// Zigzag-decode an unsigned value to signed (`(u >> 1) ^ -(u & 1)`).
+fn zigzag32(u: u32) -> i32 {
+    ((u >> 1) as i32) ^ -((u & 1) as i32)
+}
+
+fn zigzag64(u: u64) -> i64 {
+    ((u >> 1) as i64) ^ -((u & 1) as i64)
+}
+
+/// Delta-decode (cumulative sum) for index/offset columns.
+fn delta_decode(deltas: Vec<u64>) -> Vec<u64> {
+    let mut acc = 0u64;
+    deltas
+        .into_iter()
+        .map(|d| {
+            acc = acc.wrapping_add(d);
+            acc
+        })
+        .collect()
+}
+
 /// Decode all pages of one physical column (in order) into [`ColumnValues`].
 pub fn read_column(
     data: &[u8],
@@ -70,8 +106,9 @@ pub fn read_column(
     bits: u16,
     pages: &[PageInfo],
 ) -> Result<ColumnValues> {
+    use ColumnType::*;
     match column_type {
-        ColumnType::Bit => {
+        Bit => {
             let mut out = Vec::new();
             for p in pages {
                 let raw = read_page_bytes(data, p, bits)?;
@@ -81,7 +118,7 @@ pub fn read_column(
             }
             Ok(ColumnValues::Bits(out))
         }
-        ColumnType::Char | ColumnType::Byte | ColumnType::Int8 | ColumnType::UInt8 => {
+        Char | Byte | Int8 | UInt8 => {
             let mut out = Vec::new();
             for p in pages {
                 let raw = read_page_bytes(data, p, bits)?;
@@ -89,43 +126,83 @@ pub fn read_column(
             }
             Ok(ColumnValues::Bytes(out))
         }
-        ColumnType::Int32 => decode_fixed(data, bits, pages, |c| {
-            i32::from_le_bytes(c.try_into().unwrap())
-        })
-        .map(ColumnValues::I32),
-        ColumnType::Real32 => decode_fixed(data, bits, pages, |c| {
-            f32::from_le_bytes(c.try_into().unwrap())
-        })
-        .map(ColumnValues::F32),
-        ColumnType::Real64 => decode_fixed(data, bits, pages, |c| {
-            f64::from_le_bytes(c.try_into().unwrap())
-        })
-        .map(ColumnValues::F64),
-        ColumnType::Index64 | ColumnType::UInt64 => decode_fixed(data, bits, pages, |c| {
-            u64::from_le_bytes(c.try_into().unwrap())
-        })
-        .map(ColumnValues::U64),
+
+        Int32 => Ok(ColumnValues::I32(fixed(data, bits, pages, false, le_i32)?)),
+        SplitInt32 => {
+            let raw = fixed(data, bits, pages, true, le_u32)?;
+            Ok(ColumnValues::I32(raw.into_iter().map(zigzag32).collect()))
+        }
+        Int64 => Ok(ColumnValues::I64(fixed(data, bits, pages, false, le_i64)?)),
+        SplitInt64 => {
+            let raw = fixed(data, bits, pages, true, le_u64)?;
+            Ok(ColumnValues::I64(raw.into_iter().map(zigzag64).collect()))
+        }
+
+        UInt64 => Ok(ColumnValues::U64(fixed(data, bits, pages, false, le_u64)?)),
+        Index64 => Ok(ColumnValues::U64(fixed(data, bits, pages, false, le_u64)?)),
+        SplitIndex64 => {
+            let raw = fixed(data, bits, pages, true, le_u64)?;
+            Ok(ColumnValues::U64(delta_decode(raw)))
+        }
+        Index32 => {
+            let raw = fixed(data, bits, pages, false, le_u32)?;
+            Ok(ColumnValues::U64(raw.into_iter().map(u64::from).collect()))
+        }
+        SplitIndex32 => {
+            let raw = fixed(data, bits, pages, true, le_u32)?;
+            Ok(ColumnValues::U64(delta_decode(
+                raw.into_iter().map(u64::from).collect(),
+            )))
+        }
+
+        Real32 => Ok(ColumnValues::F32(fixed(data, bits, pages, false, le_f32)?)),
+        SplitReal32 => Ok(ColumnValues::F32(fixed(data, bits, pages, true, le_f32)?)),
+        Real64 => Ok(ColumnValues::F64(fixed(data, bits, pages, false, le_f64)?)),
+        SplitReal64 => Ok(ColumnValues::F64(fixed(data, bits, pages, true, le_f64)?)),
+
         other => Err(Error::Format(format!(
             "decoding column type {other:?} is not implemented yet"
         ))),
     }
 }
 
-/// Decode fixed-width little-endian elements (`bits / 8` bytes each) from each
-/// page via `convert`.
-fn decode_fixed<T>(
+/// Decode fixed-width little-endian elements from each page, unsplitting first
+/// when `split` is set.
+fn fixed<T>(
     data: &[u8],
     bits: u16,
     pages: &[PageInfo],
+    split: bool,
     convert: impl Fn(&[u8]) -> T,
 ) -> Result<Vec<T>> {
     let width = bits as usize / 8;
     let mut out = Vec::new();
     for p in pages {
         let raw = read_page_bytes(data, p, bits)?;
-        for chunk in raw.chunks_exact(width).take(p.num_elements as usize) {
+        let n = p.num_elements as usize;
+        let bytes = if split { unsplit(&raw, n, width) } else { raw };
+        for chunk in bytes.chunks_exact(width).take(n) {
             out.push(convert(chunk));
         }
     }
     Ok(out)
+}
+
+fn le_i32(c: &[u8]) -> i32 {
+    i32::from_le_bytes(c.try_into().unwrap())
+}
+fn le_u32(c: &[u8]) -> u32 {
+    u32::from_le_bytes(c.try_into().unwrap())
+}
+fn le_i64(c: &[u8]) -> i64 {
+    i64::from_le_bytes(c.try_into().unwrap())
+}
+fn le_u64(c: &[u8]) -> u64 {
+    u64::from_le_bytes(c.try_into().unwrap())
+}
+fn le_f32(c: &[u8]) -> f32 {
+    f32::from_le_bytes(c.try_into().unwrap())
+}
+fn le_f64(c: &[u8]) -> f64 {
+    f64::from_le_bytes(c.try_into().unwrap())
 }

@@ -6,8 +6,9 @@ use root_io_core::RFile;
 
 use crate::anchor::{RNTupleAnchor, ANCHOR_CLASS};
 use crate::envelope::{read_envelope, ENVELOPE_FOOTER, ENVELOPE_HEADER, ENVELOPE_PAGELIST};
+use crate::field::{self, FieldValues};
 use crate::footer::Footer;
-use crate::header::Header;
+use crate::header::{Header, StructRole};
 use crate::page::{read_column, ColumnValues};
 use crate::pagelist::{ClusterPages, ClusterSummary, PageInfo, PageList};
 
@@ -161,6 +162,110 @@ impl RNTuple {
             descriptor.bits_on_storage,
             &pages,
         )
+    }
+
+    /// Names of the top-level fields, in schema order.
+    pub fn field_names(&self) -> Vec<&str> {
+        self.header
+            .fields
+            .iter()
+            .enumerate()
+            .filter(|(i, f)| f.parent_field_id as usize == *i)
+            .map(|(_, f)| f.name.as_str())
+            .collect()
+    }
+
+    /// Read a top-level field by name, reconstructing its per-entry values.
+    /// Supports scalar leaves, `std::string`, and `std::vector<T>`.
+    pub fn read_field(&self, file: &RFile, name: &str) -> Result<FieldValues> {
+        let (idx, fld) = self
+            .header
+            .fields
+            .iter()
+            .enumerate()
+            .find(|(i, f)| f.name == name && f.parent_field_id as usize == *i)
+            .ok_or_else(|| Error::Format(format!("no top-level field named {name:?}")))?;
+
+        let columns: Vec<usize> = self
+            .header
+            .columns
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| c.field_id as usize == idx)
+            .map(|(ci, _)| ci)
+            .collect();
+
+        match fld.struct_role {
+            StructRole::Collection => {
+                let index_ci = self.index_column(&columns).ok_or_else(|| {
+                    Error::Format(format!("collection field {name:?} has no index column"))
+                })?;
+                let offsets = self.read_offsets(file, index_ci)?;
+
+                let child_idx = self
+                    .header
+                    .fields
+                    .iter()
+                    .enumerate()
+                    .position(|(ci, f)| ci != idx && f.parent_field_id as usize == idx)
+                    .ok_or_else(|| {
+                        Error::Format(format!("collection field {name:?} has no element field"))
+                    })?;
+                let child_ci = self
+                    .header
+                    .columns
+                    .iter()
+                    .position(|c| c.field_id as usize == child_idx)
+                    .ok_or_else(|| {
+                        Error::Format(format!("element field of {name:?} has no column"))
+                    })?;
+                field::collection(&offsets, self.read_column(file, child_ci)?)
+            }
+            StructRole::Leaf if fld.type_name == "std::string" => {
+                let index_ci = self.index_column(&columns).ok_or_else(|| {
+                    Error::Format(format!("string field {name:?} has no index column"))
+                })?;
+                let char_ci = *columns
+                    .iter()
+                    .find(|&&ci| !self.header.columns[ci].column_type.is_index())
+                    .ok_or_else(|| {
+                        Error::Format(format!("string field {name:?} has no char column"))
+                    })?;
+                let offsets = self.read_offsets(file, index_ci)?;
+                let bytes = match self.read_column(file, char_ci)? {
+                    ColumnValues::Bytes(v) => v,
+                    other => {
+                        return Err(Error::Format(format!("string chars decoded as {other:?}")))
+                    }
+                };
+                field::strings(&offsets, &bytes)
+            }
+            StructRole::Leaf => {
+                let ci = *columns
+                    .first()
+                    .ok_or_else(|| Error::Format(format!("field {name:?} has no column")))?;
+                field::scalar(self.read_column(file, ci)?)
+            }
+            other => Err(Error::Format(format!(
+                "field role {other:?} is not supported"
+            ))),
+        }
+    }
+
+    fn index_column(&self, columns: &[usize]) -> Option<usize> {
+        columns
+            .iter()
+            .copied()
+            .find(|&ci| self.header.columns[ci].column_type.is_index())
+    }
+
+    fn read_offsets(&self, file: &RFile, column_index: usize) -> Result<Vec<u64>> {
+        match self.read_column(file, column_index)? {
+            ColumnValues::U64(v) => Ok(v),
+            other => Err(Error::Format(format!(
+                "expected index offsets, got {other:?}"
+            ))),
+        }
     }
 }
 

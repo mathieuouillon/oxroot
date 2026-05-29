@@ -1,0 +1,80 @@
+//! M3+ typed field API: read fields by name and get reconstructed per-entry
+//! values, on both the uncompressed and Zstd (split) fixtures.
+
+use std::path::PathBuf;
+
+use root_io_core::RFile;
+use root_rntuple::{FieldValues, RNTuple};
+
+fn open(name: &str) -> RFile {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures")
+        .join(name);
+    RFile::open(path).expect("open fixture")
+}
+
+fn check_fields(name: &str) {
+    let file = open(name);
+    let ntpl = RNTuple::open(&file, "ntpl").expect("open RNTuple");
+
+    assert_eq!(
+        ntpl.field_names(),
+        ["i32", "f32", "f64", "b", "s", "vf"],
+        "{name} field names"
+    );
+
+    let field = |n| ntpl.read_field(&file, n).expect("read field");
+
+    assert_eq!(
+        field("i32"),
+        FieldValues::I32(vec![0, 10, 20, 30, 40]),
+        "{name}"
+    );
+    assert_eq!(
+        field("f32"),
+        FieldValues::F32(vec![0.5, 1.5, 2.5, 3.5, 4.5]),
+        "{name}"
+    );
+    assert_eq!(
+        field("f64"),
+        FieldValues::F64(vec![0.0, 1.25, 2.5, 3.75, 5.0]),
+        "{name}"
+    );
+    assert_eq!(
+        field("b"),
+        FieldValues::Bool(vec![true, false, true, false, true]),
+        "{name}"
+    );
+    assert_eq!(
+        field("s"),
+        FieldValues::Str(vec![
+            "row0".into(),
+            "row1".into(),
+            "row2".into(),
+            "row3".into(),
+            "row4".into()
+        ]),
+        "{name}"
+    );
+    assert_eq!(
+        field("vf"),
+        FieldValues::VecF32(vec![
+            vec![],
+            vec![1.0],
+            vec![2.0, 2.0],
+            vec![3.0, 3.0, 3.0],
+            vec![4.0, 4.0, 4.0, 4.0],
+        ]),
+        "{name}"
+    );
+}
+
+#[test]
+fn reads_fields_uncompressed() {
+    check_fields("rntuple_scalars_uncompressed.root");
+}
+
+#[test]
+fn reads_fields_zstd_split() {
+    check_fields("rntuple_scalars_zstd.root");
+}

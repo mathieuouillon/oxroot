@@ -5,7 +5,8 @@
 //       $(root-config --libs) -lROOTNTuple -o /tmp/gen_rntuple
 //   /tmp/gen_rntuple        # run from the repo root
 //
-// Writes an uncompressed RNTuple with scalar + collection + string fields.
+// Writes the same dataset twice: uncompressed (non-split column types) and
+// Zstd-compressed (split column types), to exercise both decode paths.
 
 #include <cstdint>
 #include <string>
@@ -15,7 +16,7 @@
 #include <ROOT/RNTupleWriteOptions.hxx>
 #include <ROOT/RNTupleWriter.hxx>
 
-int main() {
+static void write_rntuple(const char *path, int compression) {
     auto model = ROOT::RNTupleModel::Create();
     auto fI32 = model->MakeField<std::int32_t>("i32");
     auto fF32 = model->MakeField<float>("f32");
@@ -25,10 +26,9 @@ int main() {
     auto fVec = model->MakeField<std::vector<float>>("vf");
 
     ROOT::RNTupleWriteOptions options;
-    options.SetCompression(0); // uncompressed: no codec needed to read it back
+    options.SetCompression(compression); // 0 = none, 505 = Zstd level 5
 
-    auto writer = ROOT::RNTupleWriter::Recreate(
-        std::move(model), "ntpl", "fixtures/rntuple_scalars_uncompressed.root", options);
+    auto writer = ROOT::RNTupleWriter::Recreate(std::move(model), "ntpl", path, options);
 
     for (int i = 0; i < 5; ++i) {
         *fI32 = i * 10;
@@ -39,6 +39,10 @@ int main() {
         fVec->assign(static_cast<std::size_t>(i), static_cast<float>(i)); // length i, all = i
         writer->Fill();
     }
+}
 
-    return 0; // writer's destructor commits the dataset
+int main() {
+    write_rntuple("fixtures/rntuple_scalars_uncompressed.root", 0);
+    write_rntuple("fixtures/rntuple_scalars_zstd.root", 505);
+    return 0; // each writer's destructor commits its dataset
 }
