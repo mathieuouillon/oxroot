@@ -34,6 +34,12 @@ pub struct TH2 {
     pub entries: f64,
     /// Sum of weights (`fTsumw`).
     pub tsumw: f64,
+    /// Sum of weight^2 (`fTsumw2`).
+    pub tsumw2: f64,
+    /// Sum of weight*x (`fTsumwx`).
+    pub tsumwx: f64,
+    /// Sum of weight*x^2 (`fTsumwx2`).
+    pub tsumwx2: f64,
     /// Sum of weight*y (`fTsumwy`).
     pub tsumwy: f64,
     /// Sum of weight*y^2 (`fTsumwy2`).
@@ -71,6 +77,9 @@ impl TH2 {
             ncells: c.ncells,
             entries: c.entries,
             tsumw: c.tsumw,
+            tsumw2: c.tsumw2,
+            tsumwx: c.tsumwx,
+            tsumwx2: c.tsumwx2,
             tsumwy,
             tsumwy2,
             tsumwxy,
@@ -97,6 +106,89 @@ impl TH2 {
         (1..=nx)
             .map(|ix| (1..=ny).map(|iy| self.contents[ix + stride * iy]).collect())
             .collect()
+    }
+
+    /// Create an empty `TH2D` with uniform axes: `nx` bins over `[xlo, xhi)`
+    /// and `ny` bins over `[ylo, yhi)`. Mirrors ROOT's `TH2D` constructor.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        name: &str,
+        title: &str,
+        nx: i32,
+        xlo: f64,
+        xhi: f64,
+        ny: i32,
+        ylo: f64,
+        yhi: f64,
+    ) -> TH2 {
+        let ncells = (nx.max(0) + 2) * (ny.max(0) + 2);
+        TH2 {
+            class_name: "TH2D".to_string(),
+            name: name.to_string(),
+            title: title.to_string(),
+            xaxis: TAxis::new("xaxis", nx, xlo, xhi),
+            yaxis: TAxis::new("yaxis", ny, ylo, yhi),
+            zaxis: TAxis::new("zaxis", 1, 0.0, 1.0),
+            ncells,
+            entries: 0.0,
+            tsumw: 0.0,
+            tsumw2: 0.0,
+            tsumwx: 0.0,
+            tsumwx2: 0.0,
+            tsumwy: 0.0,
+            tsumwy2: 0.0,
+            tsumwxy: 0.0,
+            contents: vec![0.0; ncells.max(0) as usize],
+        }
+    }
+
+    /// Fill `(x, y)` with unit weight, as in an analysis loop.
+    pub fn fill(&mut self, x: f64, y: f64) {
+        self.fill_weight(x, y, 1.0);
+    }
+
+    /// Fill `(x, y)` with weight `w`, matching ROOT's `TH2::Fill` semantics:
+    /// every fill counts toward `fEntries`, the cell (including flow) is
+    /// incremented, but the statistical moment sums accumulate only when both
+    /// coordinates land in range (`fgStatOverflows` defaults to off).
+    pub fn fill_weight(&mut self, x: f64, y: f64, w: f64) {
+        let (nx, ny) = (self.nx(), self.ny());
+        let binx = self.xaxis.find_bin(x);
+        let biny = self.yaxis.find_bin(y);
+        let bin = binx + (nx + 2) * biny;
+        if let Some(c) = self.contents.get_mut(bin) {
+            *c += w;
+        }
+        self.entries += 1.0;
+
+        let in_range = (1..=nx).contains(&binx) && (1..=ny).contains(&biny);
+        if in_range {
+            self.tsumw += w;
+            self.tsumw2 += w * w;
+            self.tsumwx += w * x;
+            self.tsumwx2 += w * x * x;
+            self.tsumwy += w * y;
+            self.tsumwy2 += w * y * y;
+            self.tsumwxy += w * x * y;
+        }
+    }
+
+    /// Mean of the x projection (`fTsumwx / fTsumw`), 0 when empty.
+    pub fn mean_x(&self) -> f64 {
+        if self.tsumw == 0.0 {
+            0.0
+        } else {
+            self.tsumwx / self.tsumw
+        }
+    }
+
+    /// Mean of the y projection (`fTsumwy / fTsumw`), 0 when empty.
+    pub fn mean_y(&self) -> f64 {
+        if self.tsumw == 0.0 {
+            0.0
+        } else {
+            self.tsumwy / self.tsumw
+        }
     }
 }
 
