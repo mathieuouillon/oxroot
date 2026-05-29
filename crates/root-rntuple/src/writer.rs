@@ -1,10 +1,11 @@
-//! Writing a minimal RNTuple of scalar fields into a ROOT file.
+//! Writing an RNTuple into a ROOT file.
 //!
-//! Produces an uncompressed, single-cluster RNTuple with non-split column
-//! encodings — the simplest form the spec allows. The header/page/page-list/
-//! footer envelopes are written as raw blobs at the offsets the anchor (and the
-//! page locators) point to; only the anchor itself is a `TKey`. Validated by
-//! reading the result back and by official ROOT / uproot.
+//! Supports scalar (`bool`/`i32`/`i64`/`f32`/`f64`), `std::string`, and
+//! `std::vector<T>` fields, uncompressed and single-cluster, with non-split
+//! column encodings — the simplest form the spec allows. The header/page/
+//! page-list/footer envelopes are written as raw blobs at the offsets the
+//! anchor (and the page locators) point to; only the anchor is a `TKey`.
+//! Validated by reading the result back and by official ROOT / uproot.
 
 use std::path::Path;
 
@@ -17,56 +18,276 @@ const K_BYTE_COUNT_MASK: u32 = 0x4000_0000;
 const DATIME: u32 = 0x7d7a_79ca;
 const FILE_VERSION: u32 = 62400;
 
-/// A scalar column of data to store as one RNTuple field.
-pub enum ScalarColumn {
-    /// 32-bit signed integers (`Int32`).
+const ROLE_LEAF: u16 = 0;
+const ROLE_COLLECTION: u16 = 1;
+
+/// A column of data for one RNTuple field.
+pub enum Column {
+    /// `bool` (Bit column).
+    Bool(Vec<bool>),
+    /// 32-bit signed integers.
     I32(Vec<i32>),
-    /// 32-bit floats (`Real32`).
+    /// 64-bit signed integers.
+    I64(Vec<i64>),
+    /// 32-bit floats.
     F32(Vec<f32>),
-    /// 64-bit floats (`Real64`).
+    /// 64-bit floats.
     F64(Vec<f64>),
+    /// `std::string`.
+    Str(Vec<String>),
+    /// `std::vector<float>`.
+    VecF32(Vec<Vec<f32>>),
+    /// `std::vector<double>`.
+    VecF64(Vec<Vec<f64>>),
+    /// `std::vector<int32_t>`.
+    VecI32(Vec<Vec<i32>>),
 }
 
-/// A named scalar field.
-pub struct ScalarField {
+impl Column {
+    /// Number of top-level entries.
+    fn len(&self) -> usize {
+        match self {
+            Column::Bool(v) => v.len(),
+            Column::I32(v) => v.len(),
+            Column::I64(v) => v.len(),
+            Column::F32(v) => v.len(),
+            Column::F64(v) => v.len(),
+            Column::Str(v) => v.len(),
+            Column::VecF32(v) => v.len(),
+            Column::VecF64(v) => v.len(),
+            Column::VecI32(v) => v.len(),
+        }
+    }
+}
+
+/// A named RNTuple field.
+pub struct Field {
     /// Field name.
     pub name: String,
     /// Field data.
-    pub data: ScalarColumn,
+    pub data: Column,
 }
 
-struct Encoded {
+// --- internal lowered model ------------------------------------------------
+
+struct FieldPlan {
+    name: String,
+    type_name: String,
+    parent_id: u32,
+    role: u16,
+}
+
+struct ColumnPlan {
     column_type: ColumnType,
     bits: u16,
-    type_name: &'static str,
+    field_id: u32,
     page: Vec<u8>,
     n: u32,
 }
 
-fn encode(col: &ScalarColumn) -> Encoded {
-    match col {
-        ScalarColumn::I32(v) => Encoded {
-            column_type: ColumnType::Int32,
-            bits: 32,
-            type_name: "std::int32_t",
-            page: v.iter().flat_map(|x| x.to_le_bytes()).collect(),
-            n: v.len() as u32,
-        },
-        ScalarColumn::F32(v) => Encoded {
-            column_type: ColumnType::Real32,
-            bits: 32,
-            type_name: "float",
-            page: v.iter().flat_map(|x| x.to_le_bytes()).collect(),
-            n: v.len() as u32,
-        },
-        ScalarColumn::F64(v) => Encoded {
-            column_type: ColumnType::Real64,
-            bits: 64,
-            type_name: "double",
-            page: v.iter().flat_map(|x| x.to_le_bytes()).collect(),
-            n: v.len() as u32,
-        },
+fn le_bytes<T, const N: usize>(values: &[T], to: impl Fn(&T) -> [u8; N]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(values.len() * N);
+    for v in values {
+        out.extend_from_slice(&to(v));
     }
+    out
+}
+
+fn pack_bits(v: &[bool]) -> Vec<u8> {
+    let mut out = vec![0u8; v.len().div_ceil(8)];
+    for (i, &b) in v.iter().enumerate() {
+        if b {
+            out[i >> 3] |= 1 << (i & 7);
+        }
+    }
+    out
+}
+
+/// Cumulative end offsets (Index64) for collections, plus the flattened data.
+fn flatten<T: Clone>(v: &[Vec<T>]) -> (Vec<u64>, Vec<T>) {
+    let mut offsets = Vec::with_capacity(v.len());
+    let mut data = Vec::new();
+    for inner in v {
+        data.extend_from_slice(inner);
+        offsets.push(data.len() as u64);
+    }
+    (offsets, data)
+}
+
+/// Lower user fields into field and column plans (children appended after the
+/// top-level fields), returning the top-level entry count.
+fn lower(fields: &[Field]) -> (Vec<FieldPlan>, Vec<ColumnPlan>, u32) {
+    let n_entries = fields.first().map(|f| f.data.len() as u32).unwrap_or(0);
+    let mut field_plans: Vec<FieldPlan> = Vec::new();
+    let mut columns: Vec<ColumnPlan> = Vec::new();
+    let mut children: Vec<(u32, FieldPlan, ColumnPlan)> = Vec::new();
+
+    let leaf = |name: &str, ty: &str, parent: u32| FieldPlan {
+        name: name.to_string(),
+        type_name: ty.to_string(),
+        parent_id: parent,
+        role: ROLE_LEAF,
+    };
+
+    for (i, f) in fields.iter().enumerate() {
+        let fid = i as u32;
+        let mut col = |ct, bits, page, n: usize| {
+            columns.push(ColumnPlan {
+                column_type: ct,
+                bits,
+                field_id: fid,
+                page,
+                n: n as u32,
+            })
+        };
+        match &f.data {
+            Column::Bool(v) => {
+                field_plans.push(leaf(&f.name, "bool", fid));
+                col(ColumnType::Bit, 1, pack_bits(v), v.len());
+            }
+            Column::I32(v) => {
+                field_plans.push(leaf(&f.name, "std::int32_t", fid));
+                col(
+                    ColumnType::Int32,
+                    32,
+                    le_bytes(v, |x| x.to_le_bytes()),
+                    v.len(),
+                );
+            }
+            Column::I64(v) => {
+                field_plans.push(leaf(&f.name, "std::int64_t", fid));
+                col(
+                    ColumnType::Int64,
+                    64,
+                    le_bytes(v, |x| x.to_le_bytes()),
+                    v.len(),
+                );
+            }
+            Column::F32(v) => {
+                field_plans.push(leaf(&f.name, "float", fid));
+                col(
+                    ColumnType::Real32,
+                    32,
+                    le_bytes(v, |x| x.to_le_bytes()),
+                    v.len(),
+                );
+            }
+            Column::F64(v) => {
+                field_plans.push(leaf(&f.name, "double", fid));
+                col(
+                    ColumnType::Real64,
+                    64,
+                    le_bytes(v, |x| x.to_le_bytes()),
+                    v.len(),
+                );
+            }
+            Column::Str(v) => {
+                field_plans.push(leaf(&f.name, "std::string", fid));
+                let mut bytes = Vec::new();
+                let mut offsets = Vec::with_capacity(v.len());
+                for s in v {
+                    bytes.extend_from_slice(s.as_bytes());
+                    offsets.push(bytes.len() as u64);
+                }
+                let n_chars = bytes.len();
+                col(
+                    ColumnType::Index64,
+                    64,
+                    le_bytes(&offsets, |x| x.to_le_bytes()),
+                    v.len(),
+                );
+                col(ColumnType::Char, 8, bytes, n_chars);
+            }
+            Column::VecF32(v) => {
+                field_plans.push(FieldPlan {
+                    name: f.name.clone(),
+                    type_name: "std::vector<float>".into(),
+                    parent_id: fid,
+                    role: ROLE_COLLECTION,
+                });
+                let (offsets, data) = flatten(v);
+                col(
+                    ColumnType::Index64,
+                    64,
+                    le_bytes(&offsets, |x| x.to_le_bytes()),
+                    v.len(),
+                );
+                children.push((
+                    fid,
+                    leaf("_0", "float", 0),
+                    ColumnPlan {
+                        column_type: ColumnType::Real32,
+                        bits: 32,
+                        field_id: 0,
+                        page: le_bytes(&data, |x| x.to_le_bytes()),
+                        n: data.len() as u32,
+                    },
+                ));
+            }
+            Column::VecF64(v) => {
+                field_plans.push(FieldPlan {
+                    name: f.name.clone(),
+                    type_name: "std::vector<double>".into(),
+                    parent_id: fid,
+                    role: ROLE_COLLECTION,
+                });
+                let (offsets, data) = flatten(v);
+                col(
+                    ColumnType::Index64,
+                    64,
+                    le_bytes(&offsets, |x| x.to_le_bytes()),
+                    v.len(),
+                );
+                children.push((
+                    fid,
+                    leaf("_0", "double", 0),
+                    ColumnPlan {
+                        column_type: ColumnType::Real64,
+                        bits: 64,
+                        field_id: 0,
+                        page: le_bytes(&data, |x| x.to_le_bytes()),
+                        n: data.len() as u32,
+                    },
+                ));
+            }
+            Column::VecI32(v) => {
+                field_plans.push(FieldPlan {
+                    name: f.name.clone(),
+                    type_name: "std::vector<std::int32_t>".into(),
+                    parent_id: fid,
+                    role: ROLE_COLLECTION,
+                });
+                let (offsets, data) = flatten(v);
+                col(
+                    ColumnType::Index64,
+                    64,
+                    le_bytes(&offsets, |x| x.to_le_bytes()),
+                    v.len(),
+                );
+                children.push((
+                    fid,
+                    leaf("_0", "std::int32_t", 0),
+                    ColumnPlan {
+                        column_type: ColumnType::Int32,
+                        bits: 32,
+                        field_id: 0,
+                        page: le_bytes(&data, |x| x.to_le_bytes()),
+                        n: data.len() as u32,
+                    },
+                ));
+            }
+        }
+    }
+
+    for (parent, mut field, mut column) in children {
+        let child_id = field_plans.len() as u32;
+        field.parent_id = parent;
+        column.field_id = child_id;
+        field_plans.push(field);
+        columns.push(column);
+    }
+
+    (field_plans, columns, n_entries)
 }
 
 // --- envelope / frame / string primitives ---------------------------------
@@ -107,7 +328,7 @@ fn list_frame(items: &[Vec<u8>]) -> Vec<u8> {
 
 // --- envelope builders ------------------------------------------------------
 
-fn build_header(name: &str, fields: &[ScalarField], cols: &[Encoded]) -> Vec<u8> {
+fn build_header(name: &str, fields: &[FieldPlan], cols: &[ColumnPlan]) -> Vec<u8> {
     let mut p = Vec::new();
     p.extend_from_slice(&0i64.to_le_bytes()); // feature flags
     p.extend_from_slice(&rstr(name));
@@ -116,17 +337,15 @@ fn build_header(name: &str, fields: &[ScalarField], cols: &[Encoded]) -> Vec<u8>
 
     let field_records: Vec<Vec<u8>> = fields
         .iter()
-        .zip(cols)
-        .enumerate()
-        .map(|(i, (f, c))| {
+        .map(|f| {
             let mut r = Vec::new();
             r.extend_from_slice(&0u32.to_le_bytes()); // field version
             r.extend_from_slice(&0u32.to_le_bytes()); // type version
-            r.extend_from_slice(&(i as u32).to_le_bytes()); // parent id = self (top-level)
-            r.extend_from_slice(&0u16.to_le_bytes()); // struct role = Leaf
+            r.extend_from_slice(&f.parent_id.to_le_bytes());
+            r.extend_from_slice(&f.role.to_le_bytes()); // struct role
             r.extend_from_slice(&0u16.to_le_bytes()); // flags
             r.extend_from_slice(&rstr(&f.name));
-            r.extend_from_slice(&rstr(c.type_name));
+            r.extend_from_slice(&rstr(&f.type_name));
             r.extend_from_slice(&rstr("")); // type alias
             r.extend_from_slice(&rstr("")); // description
             record_frame(&r)
@@ -136,12 +355,11 @@ fn build_header(name: &str, fields: &[ScalarField], cols: &[Encoded]) -> Vec<u8>
 
     let column_records: Vec<Vec<u8>> = cols
         .iter()
-        .enumerate()
-        .map(|(i, c)| {
+        .map(|c| {
             let mut r = Vec::new();
             r.extend_from_slice(&(c.column_type as u16).to_le_bytes());
             r.extend_from_slice(&c.bits.to_le_bytes());
-            r.extend_from_slice(&(i as u32).to_le_bytes()); // field id
+            r.extend_from_slice(&c.field_id.to_le_bytes());
             r.extend_from_slice(&0u16.to_le_bytes()); // flags
             r.extend_from_slice(&0u16.to_le_bytes()); // representation index
             record_frame(&r)
@@ -158,29 +376,25 @@ fn build_header(name: &str, fields: &[ScalarField], cols: &[Encoded]) -> Vec<u8>
 fn build_page_list(
     n_entries: u32,
     page_offsets: &[usize],
-    cols: &[Encoded],
+    cols: &[ColumnPlan],
     header_checksum: u64,
 ) -> Vec<u8> {
     let mut p = Vec::new();
     p.extend_from_slice(&header_checksum.to_le_bytes());
 
-    // Cluster summaries: one record frame.
     let mut summary = Vec::new();
     summary.extend_from_slice(&0u64.to_le_bytes()); // first entry
     summary.extend_from_slice(&(n_entries as u64).to_le_bytes()); // num entries (flags=0)
     p.extend_from_slice(&list_frame(&[record_frame(&summary)]));
 
-    // Page locations: outer list (clusters) of inner list (columns).
     let column_frames: Vec<Vec<u8>> = cols
         .iter()
         .enumerate()
         .map(|(i, c)| {
-            // One page: num_elements (positive = no checksum) + locator(size, offset).
             let mut page = Vec::new();
-            page.extend_from_slice(&(c.n as i32).to_le_bytes());
+            page.extend_from_slice(&(c.n as i32).to_le_bytes()); // positive: no checksum
             page.extend_from_slice(&(c.page.len() as i32).to_le_bytes()); // locator size
             page.extend_from_slice(&(page_offsets[i] as u64).to_le_bytes()); // locator offset
-                                                                             // Column frame: a list frame whose body is [pages][element_offset][compression].
             let mut body = Vec::new();
             body.extend_from_slice(&1u32.to_le_bytes()); // one page
             body.extend_from_slice(&page);
@@ -208,14 +422,12 @@ fn build_footer(
     p.extend_from_slice(&0i64.to_le_bytes()); // feature flags
     p.extend_from_slice(&header_checksum.to_le_bytes());
 
-    // Schema extension: a record frame of four empty list frames.
     let mut ext = Vec::new();
     for _ in 0..4 {
         ext.extend_from_slice(&list_frame(&[]));
     }
     p.extend_from_slice(&record_frame(&ext));
 
-    // Cluster groups: one record frame with the page-list envelope link.
     let mut cg = Vec::new();
     cg.extend_from_slice(&0u64.to_le_bytes()); // min entry
     cg.extend_from_slice(&(n_entries as u64).to_le_bytes()); // entry span
@@ -243,8 +455,8 @@ fn build_anchor(
     fields.extend_from_slice(&1u16.to_be_bytes()); // minor
     fields.extend_from_slice(&1u16.to_be_bytes()); // patch
     fields.extend_from_slice(&(seek_header as u64).to_be_bytes());
-    fields.extend_from_slice(&(len_header as u64).to_be_bytes()); // nbytes (uncompressed)
-    fields.extend_from_slice(&(len_header as u64).to_be_bytes()); // len
+    fields.extend_from_slice(&(len_header as u64).to_be_bytes());
+    fields.extend_from_slice(&(len_header as u64).to_be_bytes());
     fields.extend_from_slice(&(seek_footer as u64).to_be_bytes());
     fields.extend_from_slice(&(len_footer as u64).to_be_bytes());
     fields.extend_from_slice(&(len_footer as u64).to_be_bytes());
@@ -252,8 +464,6 @@ fn build_anchor(
 
     let checksum = xxhash_rust::xxh3::xxh3_64(&fields);
 
-    // ROOT object framing: a byte count (covering version + the 64 fields, but
-    // NOT the trailing checksum) + version, then the fields, then the checksum.
     let mut obj = Vec::new();
     obj.extend_from_slice(&((66u32) | K_BYTE_COUNT_MASK).to_be_bytes());
     obj.extend_from_slice(&2u16.to_be_bytes()); // class version
@@ -263,11 +473,10 @@ fn build_anchor(
 }
 
 /// Build a complete ROOT file containing one RNTuple named `ntuple_name`.
-pub fn rntuple_file_bytes(file_name: &str, ntuple_name: &str, fields: &[ScalarField]) -> Vec<u8> {
-    let cols: Vec<Encoded> = fields.iter().map(|f| encode(&f.data)).collect();
-    let n_entries = cols.first().map(|c| c.n).unwrap_or(0);
+pub fn rntuple_file_bytes(file_name: &str, ntuple_name: &str, fields: &[Field]) -> Vec<u8> {
+    let (field_plans, cols, n_entries) = lower(fields);
 
-    let header_env = build_header(ntuple_name, fields, &cols);
+    let header_env = build_header(ntuple_name, &field_plans, &cols);
     let header_checksum =
         u64::from_le_bytes(header_env[header_env.len() - 8..].try_into().unwrap());
 
@@ -343,13 +552,14 @@ pub fn rntuple_file_bytes(file_name: &str, ntuple_name: &str, fields: &[ScalarFi
     // --- Anchor key + object. ---
     let anchor_obj = build_anchor(seek_header, header_env.len(), seek_footer, footer_env.len());
     let anchor_seek = w.len();
+    let anchor_len = anchor_obj.len() as u32;
     write_key_header(
         &mut w,
         "ROOT::RNTuple",
         ntuple_name,
         "",
-        anchor_obj.len() as u32,
-        anchor_obj.len() as u32,
+        anchor_len,
+        anchor_len,
         anchor_seek as u64,
         100,
     );
@@ -374,8 +584,8 @@ pub fn rntuple_file_bytes(file_name: &str, ntuple_name: &str, fields: &[ScalarFi
         "ROOT::RNTuple",
         ntuple_name,
         "",
-        anchor_obj.len() as u32,
-        anchor_obj.len() as u32,
+        anchor_len,
+        anchor_len,
         anchor_seek as u64,
         100,
     );
@@ -391,11 +601,7 @@ pub fn rntuple_file_bytes(file_name: &str, ntuple_name: &str, fields: &[ScalarFi
 }
 
 /// Write a one-RNTuple ROOT file to `path`.
-pub fn write_rntuple_file(
-    path: &Path,
-    ntuple_name: &str,
-    fields: &[ScalarField],
-) -> std::io::Result<()> {
+pub fn write_rntuple_file(path: &Path, ntuple_name: &str, fields: &[Field]) -> std::io::Result<()> {
     let file_name = path
         .file_name()
         .and_then(|s| s.to_str())
