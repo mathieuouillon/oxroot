@@ -4,8 +4,9 @@ Pure-Rust IO for the [CERN ROOT](https://root.cern) file format — read and wri
 **RNTuple** and **classic histograms** (TH1/TH2/TH3/TProfile) in the ROOT (TFile)
 container, with **no C++/libROOT dependency**.
 
-> Status: early development. See [the implementation plan](../.claude/plans/i-want-to-implement-melodic-teacup.md)
-> for the full design and milestone roadmap.
+> Status: **reads and writes** RNTuple and classic histograms in the ROOT
+> (TFile) container — validated against official ROOT and uproot. Hardening and
+> broader type coverage are ongoing.
 
 ## Scope
 
@@ -58,8 +59,12 @@ dependencies are added as later milestones land.
   TFile (header, TDirectory, object keys, key list) holding a byte-identical
   `TH1D` object; both uproot and official ROOT read it back with correct
   bins/stats. (Streamer-info emission + write compression are follow-ups.)_
-- **M5** — RNTuple write.
-- **M6** — Round-trip / interop hardening.
+- **M5** — RNTuple write. ✅ _root-rs writes a scalar RNTuple
+  (`Int32`/`Real32`/`Real64`) — header/page-list/footer envelopes + XXH3 anchor
+  — that both official ROOT (`RNTupleReader`) and uproot read with correct
+  values._
+- **M6** — Round-trip / interop hardening (more types, compression on write,
+  `update` mode, >2 GiB, multi-cluster).
 
 ## License
 
