@@ -65,8 +65,9 @@ dependencies are added as later milestones land.
   values._
 - **M6** — Round-trip / interop hardening. _In progress: histogram + RNTuple
   Zstd compression ✅; self-describing `TStreamerInfo` emission ✅ (ROOT reads
-  our files with no "no StreamerInfo" warning). Remaining: `update` mode,
-  multi-cluster RNTuple, >2 GiB._
+  our files with no "no StreamerInfo" warning); `update` mode ✅
+  (`append_histograms_file` adds objects to an existing file, with cycle bumps).
+  Remaining: multi-cluster RNTuple, >2 GiB._
 
 ## Analysis API
 
