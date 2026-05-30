@@ -1,0 +1,14 @@
+[package]
+name = "oxiroot"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Pure-Rust IO for the CERN ROOT file format (RNTuple + classic histograms)"
+
+[dependencies]
+oxiroot-io-core = { workspace = true }
+oxiroot-compress = { workspace = true }
+oxiroot-rntuple = { workspace = true }
+oxiroot-hist = { workspace = true }

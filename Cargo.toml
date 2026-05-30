@@ -7,13 +7,13 @@ version = "0.0.1"
 edition = "2021"
 rust-version = "1.95"
 license = "MIT"
-repository = "https://github.com/mathieuouillon/oxroot"
+repository = "https://github.com/mathieuouillon/oxiroot"
 
 [workspace.dependencies]
-oxroot-io-core = { path = "crates/oxroot-io-core" }
-oxroot-compress = { path = "crates/oxroot-compress" }
-oxroot-rntuple = { path = "crates/oxroot-rntuple" }
-oxroot-hist = { path = "crates/oxroot-hist" }
+oxiroot-io-core = { path = "crates/oxiroot-io-core" }
+oxiroot-compress = { path = "crates/oxiroot-compress" }
+oxiroot-rntuple = { path = "crates/oxiroot-rntuple" }
+oxiroot-hist = { path = "crates/oxiroot-hist" }
 
 [profile.release]
 opt-level = 3

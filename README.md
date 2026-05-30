@@ -1,4 +1,4 @@
-# oxroot
+# oxiroot
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Rust 1.95+](https://img.shields.io/badge/rust-1.95%2B-orange.svg)](https://www.rust-lang.org)
@@ -7,7 +7,7 @@
 Pure-Rust IO for the [CERN ROOT](https://root.cern) file format — **read and
 write** RNTuple and classic histograms (`TH1`/`TH2`/`TH3`/`TProfile`) in the ROOT
 (`TFile`) container, with **no C++/libROOT or Python dependency**. Files written
-by oxroot open in official ROOT and uproot, and oxroot reads files they write.
+by oxiroot open in official ROOT and uproot, and oxiroot reads files they write.
 
 > The name is *ROOT + oxide* — Rust is oxidized iron.
 
@@ -30,11 +30,11 @@ Not yet on crates.io — depend on it via git:
 
 ```toml
 [dependencies]
-oxroot = { git = "https://github.com/mathieuouillon/oxroot" }
+oxiroot = { git = "https://github.com/mathieuouillon/oxiroot" }
 ```
 
 ```rust
-use oxroot::prelude::*;
+use oxiroot::prelude::*;
 
 // Fill and save a histogram (weighted errors + variable bins supported).
 let mut h = TH1::new("pt", "p_{T}", 50, 0.0, 100.0);
@@ -49,17 +49,17 @@ let f = RFile::open("data.root")?;
 let n = RNTuple::open(&f, "events")?.num_entries();
 ```
 
-The [`analysis` example](crates/oxroot/examples/analysis.rs) is an end-to-end
+The [`analysis` example](crates/oxiroot/examples/analysis.rs) is an end-to-end
 mini analysis — weighted/variable-bin histograms → scale/merge/normalize →
 per-region subdirectories → a columnar event dataset → read-back. Run it with:
 
 ```sh
-cargo run -p oxroot --example analysis
+cargo run -p oxiroot --example analysis
 ```
 
 ## Features
 
-### Histograms (`oxroot::hist`)
+### Histograms (`oxiroot::hist`)
 
 - Read `TH1`/`TH2`/`TH3` in every precision (`D`/`F`/`I`/`S`/`C`/`L`) and
   `TProfile`.
@@ -74,7 +74,7 @@ cargo run -p oxroot --example analysis
   `append_histograms_file`. Written files embed a `TStreamerInfo` list, so they
   are self-describing for any ROOT reader.
 
-### RNTuple (`oxroot::ntuple`)
+### RNTuple (`oxiroot::ntuple`)
 
 - Read the binary spec v1.0.0.0: anchor → envelopes → schema → clusters → pages,
   with split/zigzag/delta encodings and Zstd-compressed pages.
@@ -89,11 +89,11 @@ cargo run -p oxroot --example analysis
 
 | Crate | Purpose |
 |-------|---------|
-| `oxroot` | Facade: `prelude` + re-exports of everything below |
-| `oxroot-io-core` | `TFile` container, buffer primitives, streamer engine |
-| `oxroot-compress` | ROOT 9-byte block framing + codec backends |
-| `oxroot-rntuple` | RNTuple reader/writer (spec v1.0.0.0) |
-| `oxroot-hist` | Classic `TH1`/`TH2`/`TH3`/`TProfile` read/write |
+| `oxiroot` | Facade: `prelude` + re-exports of everything below |
+| `oxiroot-io-core` | `TFile` container, buffer primitives, streamer engine |
+| `oxiroot-compress` | ROOT 9-byte block framing + codec backends |
+| `oxiroot-rntuple` | RNTuple reader/writer (spec v1.0.0.0) |
+| `oxiroot-hist` | Classic `TH1`/`TH2`/`TH3`/`TProfile` read/write |
 
 Dependencies are pure Rust: [`xxhash-rust`](https://crates.io/crates/xxhash-rust)
 (RNTuple XXH3), [`ruzstd`](https://crates.io/crates/ruzstd) (Zstd encode/decode),
